@@ -27,16 +27,22 @@ def build_messages(facts, vacancy):
     user = (f"RESUME FACTS:\n{facts}\n\n"
             f"VACANCY:\n{vacancy['title']} at {vacancy['company']}\n"
             f"{vacancy['description'][:6000]}")
-    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+    # One user message: some models (Gemma) reject the system role.
+    return [{"role": "user", "content": f"{SYSTEM}\n\n{user}"}]
 
 
 def call_llm(messages):
-    key = os.environ["REQUESTY_API_KEY"]
+    key = os.environ.get("REQUESTY_API_KEY")
+    if not key:
+        raise RuntimeError("REQUESTY_API_KEY is not set")
     req = urllib.request.Request(
         URL, json.dumps({"model": MODEL, "messages": messages}).encode(),
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)["choices"][0]["message"]["content"].strip()
+        content = json.load(r)["choices"][0]["message"]["content"]
+    if not content or not content.strip():
+        raise RuntimeError("LLM returned empty content")
+    return content.strip()
 
 
 def check_letter(text, facts):

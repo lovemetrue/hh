@@ -14,6 +14,17 @@ import letter
 import store
 
 DAILY_LIMIT = 15
+HERE = Path(__file__).parent
+MAX_FAILURES = 3
+
+
+class AlreadyApplied(RuntimeError):
+    pass
+
+
+def clean(text):
+    # Strip ESC so vacancy/letter text cannot inject terminal escape sequences.
+    return (text or "").replace("\x1b", "")
 PROFILE = str(Path(__file__).parent / ".profile")
 
 # captcha is detected via data-qa or an iframe src; detection only, never interaction
@@ -29,14 +40,14 @@ SEL = {
 }
 
 
-def load_env(path=".env"):
+def load_env(path=HERE / ".env"):
     p = Path(path)
     if not p.exists():
         return
     for line in p.read_text().splitlines():
         if "=" in line and not line.lstrip().startswith("#"):
             k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+            os.environ.setdefault(k.strip(), v.strip().strip('"\''))
 
 
 def open_context(p):
@@ -83,6 +94,8 @@ def cmd_check_selectors(args):
 def read_vacancy(page, url):
     page.goto(url)
     guard(page)
+    if page.query_selector(SEL["applied"]):
+        raise AlreadyApplied("already applied")
     data = {"id": store.vid_from_url(url), "url": url}
     for key in ("title", "company", "description"):
         el = page.query_selector(SEL[key])
@@ -94,7 +107,7 @@ def read_vacancy(page, url):
 
 def cmd_collect(args):
     conn = store.connect()
-    added = skipped = failed = 0
+    added = skipped = failed = streak = 0
     with sync_playwright() as p:
         ctx = open_context(p)
         try:
@@ -125,7 +138,16 @@ def cmd_collect(args):
                 except Exception as e:
                     failed += 1
                     print(f"skip {url}: {e}")
+                    # Layout-change failures stop the run; "already applied" is normal.
+                    if not isinstance(e, AlreadyApplied):
+                        streak += 1
+                        if streak >= MAX_FAILURES:
+                            raise RuntimeError(
+                                f"{MAX_FAILURES} consecutive failures; run check-selectors") from e
+                    if i < len(urls) - 1:
+                        pause()
                     continue
+                streak = 0
                 added += 1
                 print(f"+ {url}")
                 if i < len(urls) - 1:
@@ -136,9 +158,13 @@ def cmd_collect(args):
 
 
 def cmd_draft(args):
-    facts = Path("resume_facts.md").read_text()
+    facts = (HERE / "resume_facts.md").read_text()
     conn = store.connect()
-    for v in store.by_status(conn, "new")[: args.limit]:
+    limit = max(0, min(args.limit, DAILY_LIMIT - store.count_today(conn, "drafted")))
+    if limit == 0:
+        print(f"Daily draft limit {DAILY_LIMIT} exhausted; nothing to draft.")
+        return
+    for v in store.by_status(conn, "new")[:limit]:
         text, problems = letter.generate_letter(facts, dict(v))
         store.set_draft(conn, v["id"], text, "; ".join(problems))
         print(f"{v['id']} {v['title']} | warnings: {problems or 'none'}")
@@ -172,14 +198,19 @@ def prepare_response(page, v):
     except PWTimeout:
         print("Letter field did not appear; use the clipboard.")
     input("Press Enter here after you pressed send (or if you give up)... ")
-    page.goto(v["url"])
-    guard(page)
-    if page.query_selector(SEL["applied"]):
-        return True
+    try:
+        page.goto(v["url"])
+        guard(page)
+        if page.query_selector(SEL["applied"]):
+            return True
+    except Exception as e:
+        print(f"Verification failed: {e}")
+        return input("Could not verify on the page. Mark as sent? [y/N] ").strip().lower() == "y"
     return input("Response not detected on the page. Mark as sent? [y/N] ").strip().lower() == "y"
 
 
 def cmd_review(args):
+    facts = (HERE / "resume_facts.md").read_text()
     conn = store.connect()
     with sync_playwright() as p:
         ctx = open_context(p)
@@ -191,11 +222,17 @@ def cmd_review(args):
                     break
                 while True:
                     v = conn.execute("SELECT * FROM vacancies WHERE id=?", (v["id"],)).fetchone()
-                    print(f"\n=== {v['title']} | {v['company']}\n{v['url']}")
-                    print(f"warnings: {v['warnings'] or 'none'}\n\n{v['letter']}\n")
+                    print(f"\n=== {clean(v['title'])} | {clean(v['company'])}\n{v['url']}")
+                    print(clean(v["description"])[:800] + "\n")
+                    print(f"warnings: {clean(v['warnings']) or 'none'}\n\n{clean(v['letter'])}\n")
                     a = input("[s]end / [e]dit / [k]skip / [q]uit: ").strip().lower()
                     if a == "e":
-                        store.set_letter(conn, v["id"], edit_text(v["letter"]))
+                        new = edit_text(v["letter"])
+                        if not new:
+                            print("Empty letter refused; keeping the old one.")
+                        else:
+                            store.set_draft(conn, v["id"], new,
+                                            "; ".join(letter.check_letter(new, facts)))
                     elif a == "k":
                         store.set_status(conn, v["id"], "skipped")
                         break

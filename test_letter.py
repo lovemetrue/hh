@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import io
+
+import pytest
+
 import letter
 
 FACTS = "Kubernetes Docker Terraform Ansible GitLab DevSecOps"
@@ -54,3 +58,17 @@ def test_resume_facts_file_has_no_contacts():
     p = Path(__file__).parent / "resume_facts.md"
     facts = p.read_text()
     assert not letter.PHONE.search(facts) and not letter.EMAIL.search(facts)
+
+
+def test_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("REQUESTY_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="REQUESTY_API_KEY is not set"):
+        letter.call_llm([])
+
+
+def test_null_content_raises(monkeypatch):
+    monkeypatch.setenv("REQUESTY_API_KEY", "k")
+    body = b'{"choices":[{"message":{"content":null}}]}'
+    monkeypatch.setattr(letter.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(body))
+    with pytest.raises(RuntimeError, match="empty content"):
+        letter.call_llm([])
