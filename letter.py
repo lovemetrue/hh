@@ -2,6 +2,8 @@ import json
 import os
 import re
 import ssl
+import time
+import urllib.error
 import urllib.request
 
 try:  # python.org builds on macOS ship without root certs; certifi fixes that
@@ -12,6 +14,7 @@ except ImportError:
 
 URL = "https://router.requesty.ai/v1/chat/completions"
 MODEL = "google/gemma-4-31b-it"
+RETRIES = 6
 SYSTEM = (
     "You write short cover letters for a job seeker.\n"
     "Use ONLY the facts in RESUME FACTS. Never invent technologies, employers, "
@@ -46,8 +49,16 @@ def call_llm(messages):
     req = urllib.request.Request(
         URL, json.dumps({"model": MODEL, "messages": messages}).encode(),
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120, context=SSL_CTX) as r:
-        content = json.load(r)["choices"][0]["message"]["content"]
+    for attempt in range(RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=120, context=SSL_CTX) as r:
+                content = json.load(r)["choices"][0]["message"]["content"]
+            break
+        except urllib.error.HTTPError as e:
+            # rate limit: wait as the server asks (Retry-After) or back off exponentially
+            if e.code != 429 or attempt == RETRIES - 1:
+                raise
+            time.sleep(float(e.headers.get("Retry-After") or 5 * 2 ** attempt))
     if not content or not content.strip():
         raise RuntimeError("LLM returned empty content")
     return content.strip()

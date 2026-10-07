@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import io
+import json
 
 import pytest
 
@@ -72,3 +73,22 @@ def test_null_content_raises(monkeypatch):
     monkeypatch.setattr(letter.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(body))
     with pytest.raises(RuntimeError, match="empty content"):
         letter.call_llm([])
+
+
+def test_call_llm_retries_on_429(monkeypatch):
+    import io
+    import urllib.error
+    monkeypatch.setenv("REQUESTY_API_KEY", "k")
+    monkeypatch.setattr(letter.time, "sleep", lambda s: None)
+    body = json.dumps({"choices": [{"message": {"content": " ok "}}]}).encode()
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError("u", 429, "Too Many", {"Retry-After": "1"}, None)
+        return io.BytesIO(body)
+
+    monkeypatch.setattr(letter.urllib.request, "urlopen", fake)
+    assert letter.call_llm([{"role": "user", "content": "x"}]) == "ok"
+    assert len(calls) == 2
