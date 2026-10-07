@@ -32,6 +32,8 @@ SYSTEM = (
     "Pick only the facts relevant to this vacancy; do not repeat the whole resume.\n"
     "Experience: if you state years, say exactly '2,2 года DevOps-опыта' "
     "(optionally 'плюс около 2 лет смежного опыта'); NEVER write 4 years of DevOps experience.\n"
+    "Do not write about salary, office work, relocation, start date or availability; "
+    "do not call the job a trainee/intern position.\n"
     "The candidate's role is DevOps: never write the word DevSecOps (security tools such as Trivy "
     "or Checkov may be named as part of DevOps work)."
 )
