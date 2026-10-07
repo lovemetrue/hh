@@ -311,8 +311,9 @@ def cmd_send(args):
                 if store.count_today(conn, "sent") >= DAILY_LIMIT:
                     print(f"Daily limit {DAILY_LIMIT} reached.")
                     break
-                if v["warnings"]:
-                    print(f"hold for review: {clean(v['title'])} ({v['id']}): {clean(v['warnings'])}")
+                # No manual review by decision of the user; only contact leaks are held back.
+                if "phone number" in v["warnings"] or "e-mail" in v["warnings"]:
+                    print(f"hold (contacts in letter): {clean(v['title'])} ({v['id']})")
                     continue
                 result = respond(page, v)
                 print(f"{result}: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
