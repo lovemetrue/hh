@@ -36,6 +36,11 @@ SEL = {
     "description": '[data-qa="vacancy-description"]',
     "letter": '[data-qa="vacancy-response-popup-form-letter-input"]',
     "applied": '[data-qa="vacancy-response-link-view-topic"]',
+    # verified live 2026-10-07: the apply click sends at once, the letter is attached afterwards
+    "apply": 'a[data-qa="vacancy-response-link-top"]',
+    "success": '[data-qa="vacancy-response-success-standard-notification"]',
+    "attach": 'button[data-qa="responded-success-attach-cover-letter"]',
+    "submit": '[data-qa="vacancy-response-letter-submit"]',
     "captcha": '[data-qa*="captcha"], iframe[src*="captcha"]',
 }
 
@@ -128,6 +133,8 @@ def cmd_collect(args):
                     pause()
             urls = list(dict.fromkeys(links))
             for i, url in enumerate(urls):
+                if args.max and added >= args.max:
+                    break
                 exists = conn.execute("SELECT 1 FROM vacancies WHERE id=?",
                                       (store.vid_from_url(url),)).fetchone()
                 if exists:
@@ -249,6 +256,76 @@ def cmd_review(args):
             ctx.close()
 
 
+def respond(page, v):
+    """Apply and attach the letter. Returns sent | sent-no-letter | already | manual."""
+    page.goto(v["url"])
+    guard(page)
+    if page.query_selector(SEL["applied"]):
+        return "already"
+    buttons = [b for b in page.query_selector_all(SEL["apply"]) if b.is_visible()]
+    if not buttons:
+        return "manual"
+    buttons[0].click()
+    try:
+        # hh sends the response at once; tests, questionnaires and popups never show this.
+        page.wait_for_selector(SEL["success"], timeout=15_000)
+    except PWTimeout:
+        guard(page)
+        return "manual"
+    try:
+        page.click(SEL["attach"])
+        page.fill(SEL["letter"], v["letter"])
+        page.click(SEL["submit"])
+        # text match: hh shows no data-qa for this toast
+        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=15_000)
+    except Exception as e:
+        print(f"  letter not attached: {e}")
+        return "sent-no-letter"
+    return "sent"
+
+
+def cmd_send(args):
+    conn = store.connect()
+    manual_streak = 0
+    with sync_playwright() as p:
+        ctx = open_context(p)
+        try:
+            page = first_page(ctx)
+            for v in store.by_status(conn, "drafted"):
+                if store.count_today(conn, "sent") >= DAILY_LIMIT:
+                    print(f"Daily limit {DAILY_LIMIT} reached.")
+                    break
+                if v["warnings"]:
+                    print(f"hold for review: {clean(v['title'])} ({v['id']}): {clean(v['warnings'])}")
+                    continue
+                result = respond(page, v)
+                print(f"{result}: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
+                if result == "already":
+                    store.set_status(conn, v["id"], "skipped")
+                elif result == "manual":
+                    store.set_status(conn, v["id"], "manual")
+                    manual_streak += 1
+                    if manual_streak >= MAX_FAILURES:
+                        raise RuntimeError(f"{MAX_FAILURES} vacancies in a row need manual response; "
+                                           "run check-selectors")
+                else:
+                    store.set_status(conn, v["id"], "sent")
+                    if result == "sent-no-letter":
+                        print("  !! response sent WITHOUT the letter; attach it by hand")
+                if result != "manual":
+                    manual_streak = 0
+                pause()
+        finally:
+            ctx.close()
+
+
+def cmd_auto(args):
+    args.limit = args.max
+    cmd_collect(args)
+    cmd_draft(args)
+    cmd_send(args)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="bot.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -259,11 +336,18 @@ def main():
     c = sub.add_parser("collect")
     c.add_argument("url")
     c.add_argument("--pages", type=int, default=2)
+    c.add_argument("--max", type=int, default=0, help="stop after N new vacancies (0 = no cap)")
     c.set_defaults(fn=cmd_collect)
     c = sub.add_parser("draft")
     c.add_argument("--limit", type=int, default=DAILY_LIMIT)
     c.set_defaults(fn=cmd_draft)
     sub.add_parser("review").set_defaults(fn=cmd_review)
+    sub.add_parser("send").set_defaults(fn=cmd_send)
+    c = sub.add_parser("auto")
+    c.add_argument("url")
+    c.add_argument("--pages", type=int, default=1)
+    c.add_argument("--max", type=int, default=DAILY_LIMIT, help="new vacancies to collect and draft")
+    c.set_defaults(fn=cmd_auto)
     args = ap.parse_args()
     load_env()
     args.fn(args)
