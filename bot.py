@@ -15,7 +15,7 @@ import letter
 import store
 
 DAILY_LIMIT = 100
-DRAFT_WORKERS = 2
+DRAFT_WORKERS = 4
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
 
