@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
@@ -13,7 +14,8 @@ from playwright.sync_api import sync_playwright
 import letter
 import store
 
-DAILY_LIMIT = 15
+DAILY_LIMIT = 100
+DRAFT_WORKERS = 4
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
 
@@ -171,10 +173,22 @@ def cmd_draft(args):
     if limit == 0:
         print(f"Daily draft limit {DAILY_LIMIT} exhausted; nothing to draft.")
         return
-    for v in store.by_status(conn, "new")[:limit]:
-        text, problems = letter.generate_letter(facts, dict(v))
-        store.set_draft(conn, v["id"], text, "; ".join(problems))
-        print(f"{v['id']} {v['title']} | warnings: {problems or 'none'}")
+    rows = store.by_status(conn, "new")[:limit]
+
+    def gen(v):
+        try:
+            return letter.generate_letter(facts, dict(v))
+        except Exception as e:  # one failed LLM call must not lose the whole batch
+            return None, [str(e)]
+
+    # LLM calls are slow and independent: run them in threads, write to sqlite from this thread only.
+    with ThreadPoolExecutor(DRAFT_WORKERS) as ex:
+        for v, (text, problems) in zip(rows, ex.map(gen, rows)):
+            if text is None:
+                print(f"{v['id']} draft failed: {problems[0]}")
+                continue
+            store.set_draft(conn, v["id"], text, "; ".join(problems))
+            print(f"{v['id']} {v['title']} | warnings: {problems or 'none'}")
 
 
 def edit_text(text):
@@ -268,17 +282,18 @@ def respond(page, v):
     buttons[0].click()
     try:
         # hh sends the response at once; any of these shows it went through (or asks for the letter).
-        page.wait_for_selector(f'{SEL["success"]}, {SEL["applied"]}, {SEL["letter"]}', timeout=8_000)
+        page.wait_for_selector(f'{SEL["success"]}, {SEL["applied"]}, {SEL["letter"]}', timeout=3_000)
     except PWTimeout:
         guard(page)
-        return "manual"
+        # the response may have gone through without a visible toast
+        return "sent-no-letter" if page.query_selector(SEL["applied"]) else "manual"
     try:
         if not page.is_visible(SEL["letter"]):
             page.click(SEL["attach"], timeout=3_000)
         page.fill(SEL["letter"], v["letter"])
         page.click(SEL["submit"])
         # text match: hh shows no data-qa for this toast
-        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=8_000)
+        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=3_000)
     except Exception as e:
         print(f"  letter not attached: {e}")
         return "sent-no-letter"
