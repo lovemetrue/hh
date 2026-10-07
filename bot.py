@@ -18,6 +18,7 @@ DAILY_LIMIT = 100
 DRAFT_WORKERS = 4
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
+MAX_MANUAL = 10  # vacancies with a test or questionnaire are common; a long run hints at a layout change
 
 
 class AlreadyApplied(RuntimeError):
@@ -61,6 +62,11 @@ def open_context(p):
     return p.chromium.launch_persistent_context(PROFILE, headless=False, locale="ru-RU")
 
 
+def go(page, url):
+    # domcontentloaded: hh pages are heavy (ads, trackers); waiting for "load" timed out at 30 s.
+    page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+
+
 def first_page(ctx):
     return ctx.pages[0] if ctx.pages else ctx.new_page()
 
@@ -79,7 +85,7 @@ def cmd_login(args):
     with sync_playwright() as p:
         ctx = open_context(p)
         try:
-            first_page(ctx).goto("https://hh.ru/account/login")
+            go(first_page(ctx), "https://hh.ru/account/login")
             input("Log in to hh.ru in the browser window, then press Enter here... ")
         finally:
             ctx.close()
@@ -90,7 +96,7 @@ def cmd_check_selectors(args):
         ctx = open_context(p)
         try:
             page = first_page(ctx)
-            page.goto(args.url)
+            go(page, args.url)
             guard(page)
             for key, sel in SEL.items():
                 print(f"{key:12} {len(page.query_selector_all(sel))} match(es)")
@@ -99,13 +105,16 @@ def cmd_check_selectors(args):
 
 
 def read_vacancy(page, url):
-    page.goto(url)
+    go(page, url)
     guard(page)
     if page.query_selector(SEL["applied"]):
         raise AlreadyApplied("already applied")
     data = {"id": store.vid_from_url(url), "url": url}
     for key in ("title", "company", "description"):
         el = page.query_selector(SEL[key])
+        if el is None and key == "company":
+            data[key] = "(employer hidden)"
+            continue
         if el is None:
             raise RuntimeError(f"selector '{key}' not found on {url}; run check-selectors")
         data[key] = el.inner_text().strip()
@@ -122,7 +131,7 @@ def cmd_collect(args):
             links = []
             for n in range(args.pages):
                 sep = "&" if "?" in args.url else "?"
-                page.goto(f"{args.url}{sep}page={n}")
+                go(page, f"{args.url}{sep}page={n}")
                 guard(page)
                 hrefs = [a.get_attribute("href") for a in page.query_selector_all(SEL["serp_link"])]
                 found = [h.split("?")[0] for h in hrefs if h and "/vacancy/" in h]
@@ -204,7 +213,7 @@ def edit_text(text):
 
 def prepare_response(page, v):
     """Open the vacancy and stage the letter. The human clicks the response/send buttons."""
-    page.goto(v["url"])
+    go(page, v["url"])
     guard(page)
     if page.query_selector(SEL["applied"]):
         print("Already responded to this vacancy; marking as skipped.")
@@ -220,7 +229,7 @@ def prepare_response(page, v):
         print("Letter field did not appear; use the clipboard.")
     input("Press Enter here after you pressed send (or if you give up)... ")
     try:
-        page.goto(v["url"])
+        go(page, v["url"])
         guard(page)
         if page.query_selector(SEL["applied"]):
             return True
@@ -272,7 +281,7 @@ def cmd_review(args):
 
 def respond(page, v):
     """Apply and attach the letter. Returns sent | sent-no-letter | already | manual."""
-    page.goto(v["url"])
+    go(page, v["url"])
     guard(page)
     if page.query_selector(SEL["applied"]):
         return "already"
@@ -322,8 +331,8 @@ def cmd_send(args):
                 elif result == "manual":
                     store.set_status(conn, v["id"], "manual")
                     manual_streak += 1
-                    if manual_streak >= MAX_FAILURES:
-                        raise RuntimeError(f"{MAX_FAILURES} vacancies in a row need manual response; "
+                    if manual_streak >= MAX_MANUAL:
+                        raise RuntimeError(f"{MAX_MANUAL} vacancies in a row need manual response; "
                                            "run check-selectors")
                 else:
                     store.set_status(conn, v["id"], "sent")

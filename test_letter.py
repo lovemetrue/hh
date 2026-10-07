@@ -92,3 +92,26 @@ def test_call_llm_retries_on_429(monkeypatch):
     monkeypatch.setattr(letter.urllib.request, "urlopen", fake)
     assert letter.call_llm([{"role": "user", "content": "x"}]) == "ok"
     assert len(calls) == 2
+
+
+def test_call_llm_retries_on_502(monkeypatch):
+    import urllib.error
+    monkeypatch.setenv("REQUESTY_API_KEY", "k")
+    monkeypatch.setattr(letter.time, "sleep", lambda s: None)
+    body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError("u", 502, "Bad Gateway", {}, None)
+        return io.BytesIO(body)
+
+    monkeypatch.setattr(letter.urllib.request, "urlopen", fake)
+    assert letter.call_llm([{"role": "user", "content": "x"}]) == "ok"
+    assert len(calls) == 3
+
+
+def test_english_letter_with_stray_cyrillic_skips_unknown_word_check():
+    text = ("Hello, I run Kubernetes clusters and Docker builds at scale. " * 12) + "Спасибо."
+    assert letter.check_letter(text, FACTS) == []

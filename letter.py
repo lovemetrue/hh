@@ -1,7 +1,9 @@
 import json
 import os
+import random
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -14,7 +16,11 @@ except ImportError:
 
 URL = "https://router.requesty.ai/v1/chat/completions"
 MODEL = "google/gemma-4-31b-it"
-RETRIES = 6
+RETRIES = 8
+RETRY_CODES = (429, 500, 502, 503, 504)
+MIN_INTERVAL = 1.5  # seconds between LLM requests across all threads
+_throttle_lock = threading.Lock()
+_last_call = [0.0]
 SYSTEM = (
     "You write short cover letters for a job seeker.\n"
     "Use ONLY the facts in RESUME FACTS. Never invent technologies, employers, "
@@ -42,6 +48,14 @@ def build_messages(facts, vacancy):
     return [{"role": "user", "content": f"{SYSTEM}\n\n{user}"}]
 
 
+def _throttle():
+    with _throttle_lock:
+        wait = _last_call[0] + MIN_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call[0] = time.monotonic()
+
+
 def call_llm(messages):
     key = os.environ.get("REQUESTY_API_KEY")
     if not key:
@@ -50,15 +64,17 @@ def call_llm(messages):
         URL, json.dumps({"model": MODEL, "messages": messages}).encode(),
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     for attempt in range(RETRIES):
+        _throttle()
         try:
             with urllib.request.urlopen(req, timeout=120, context=SSL_CTX) as r:
                 content = json.load(r)["choices"][0]["message"]["content"]
             break
         except urllib.error.HTTPError as e:
-            # rate limit: wait as the server asks (Retry-After) or back off exponentially
-            if e.code != 429 or attempt == RETRIES - 1:
+            # rate limit or flaky gateway: wait as the server asks (Retry-After) or back off, capped
+            if e.code not in RETRY_CODES or attempt == RETRIES - 1:
                 raise
-            time.sleep(float(e.headers.get("Retry-After") or 5 * 2 ** attempt))
+            delay = float(e.headers.get("Retry-After") or min(60, 5 * 2 ** attempt))
+            time.sleep(delay + random.uniform(0, 2))
     if not content or not content.strip():
         raise RuntimeError("LLM returned empty content")
     return content.strip()
@@ -75,7 +91,7 @@ def check_letter(text, facts):
     if not 700 <= len(text) <= 1000:
         problems.append(f"length {len(text)}")
     # Latin words missing from the facts hint at invented tech; skipped for English letters.
-    if CYRILLIC.search(text):
+    if len(CYRILLIC.findall(text)) > len(text) * 0.3:
         known = {w.rstrip(TRAIL).lower() for w in LATIN.findall(facts)}
         unknown = sorted({w.rstrip(TRAIL) for w in LATIN.findall(text)
                           if w.rstrip(TRAIL).lower() not in known})
