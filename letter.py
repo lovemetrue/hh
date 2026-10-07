@@ -3,7 +3,6 @@ import os
 import random
 import re
 import ssl
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -16,11 +15,16 @@ except ImportError:
 
 URL = "https://router.requesty.ai/v1/chat/completions"
 MODEL = "google/gemma-4-31b-it"
-RETRIES = 8
+RETRIES = 6
 RETRY_CODES = (429, 500, 502, 503, 504)
-MIN_INTERVAL = 1.5  # seconds between LLM requests across all threads
-_throttle_lock = threading.Lock()
-_last_call = [0.0]
+MIN_INTERVAL, MAX_INTERVAL = 4.0, 120.0
+# The free model has a hard request limit and sends no Retry-After: one request at a time,
+# with a start-to-start interval that doubles on 429 and shrinks slowly on success.
+_pace = {"interval": 8.0, "last": 0.0}
+
+
+class RateLimited(RuntimeError):
+    """429 survived every retry: the free-model quota is exhausted for now."""
 SYSTEM = (
     "You write short cover letters for a job seeker.\n"
     "Use ONLY the facts in RESUME FACTS. Never invent technologies, employers, "
@@ -57,11 +61,10 @@ def build_messages(facts, vacancy):
 
 
 def _throttle():
-    with _throttle_lock:
-        wait = _last_call[0] + MIN_INTERVAL - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        _last_call[0] = time.monotonic()
+    wait = _pace["last"] + _pace["interval"] - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _pace["last"] = time.monotonic()
 
 
 def call_llm(messages):
@@ -76,13 +79,18 @@ def call_llm(messages):
         try:
             with urllib.request.urlopen(req, timeout=120, context=SSL_CTX) as r:
                 content = json.load(r)["choices"][0]["message"]["content"]
+            _pace["interval"] = max(MIN_INTERVAL, _pace["interval"] * 0.9)
             break
         except urllib.error.HTTPError as e:
-            # rate limit or flaky gateway: wait as the server asks (Retry-After) or back off, capped
-            if e.code not in RETRY_CODES or attempt == RETRIES - 1:
+            if e.code not in RETRY_CODES:
                 raise
-            delay = float(e.headers.get("Retry-After") or min(60, 5 * 2 ** attempt))
-            time.sleep(delay + random.uniform(0, 2))
+            if e.code == 429:
+                _pace["interval"] = min(MAX_INTERVAL, _pace["interval"] * 2)
+            if attempt == RETRIES - 1:
+                if e.code == 429:
+                    raise RateLimited("free-model rate limit persists") from e
+                raise
+            time.sleep(float(e.headers.get("Retry-After") or min(60, 15 * 2 ** attempt)) + random.uniform(0, 2))
     if not content or not content.strip():
         raise RuntimeError("LLM returned empty content")
     return content.strip()

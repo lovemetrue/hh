@@ -5,7 +5,6 @@ import shlex
 import subprocess
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
@@ -15,7 +14,6 @@ import letter
 import store
 
 DAILY_LIMIT = 100
-DRAFT_WORKERS = 4
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
 MAX_MANUAL = 10  # vacancies with a test or questionnaire are common; a long run hints at a layout change
@@ -192,21 +190,24 @@ def cmd_draft(args):
         print(f"Daily draft limit {DAILY_LIMIT} exhausted; nothing to draft.")
         return
     rows = store.by_status(conn, "new")[:limit]
-
-    def gen(v):
+    limited = 0
+    for v in rows:
         try:
-            return letter.generate_letter(facts, dict(v))
+            text, problems = letter.generate_letter(facts, dict(v))
+        except letter.RateLimited:
+            limited += 1
+            print(f"{v['id']} rate limited ({limited} in a row)")
+            if limited >= MAX_FAILURES:
+                print("Free-model quota exhausted. Vacancies stay 'new'; rerun `draft` later "
+                      "or switch letter.MODEL to a paid model.")
+                break
+            continue
         except Exception as e:  # one failed LLM call must not lose the whole batch
-            return None, [str(e)]
-
-    # LLM calls are slow and independent: run them in threads, write to sqlite from this thread only.
-    with ThreadPoolExecutor(DRAFT_WORKERS) as ex:
-        for v, (text, problems) in zip(rows, ex.map(gen, rows)):
-            if text is None:
-                print(f"{v['id']} draft failed: {problems[0]}")
-                continue
-            store.set_draft(conn, v["id"], text, "; ".join(problems))
-            print(f"{v['id']} {v['title']} | warnings: {problems or 'none'}")
+            print(f"{v['id']} draft failed: {e}")
+            continue
+        limited = 0
+        store.set_draft(conn, v["id"], text, "; ".join(problems))
+        print(f"{v['id']} {v['title']} | warnings: {problems or 'none'}")
 
 
 def edit_text(text):

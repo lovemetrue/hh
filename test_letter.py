@@ -126,3 +126,18 @@ def test_wrong_experience_claim_is_flagged():
 
 def test_devsecops_word_is_flagged():
     assert "mentions DevSecOps" in letter.check_letter(GOOD + " Работаю как DevSecOps.", FACTS)
+
+
+def test_persistent_429_raises_rate_limited_and_slows_down(monkeypatch):
+    import urllib.error
+    monkeypatch.setenv("REQUESTY_API_KEY", "k")
+    monkeypatch.setattr(letter.time, "sleep", lambda s: None)
+    letter._pace.update(interval=8.0, last=0.0)
+
+    def always_429(*a, **k):
+        raise urllib.error.HTTPError("u", 429, "Too Many", {}, None)
+
+    monkeypatch.setattr(letter.urllib.request, "urlopen", always_429)
+    with pytest.raises(letter.RateLimited):
+        letter.call_llm([{"role": "user", "content": "x"}])
+    assert letter._pace["interval"] == letter.MAX_INTERVAL
