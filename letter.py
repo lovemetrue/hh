@@ -120,6 +120,23 @@ def check_letter(text, facts):
     return problems
 
 
+PERCENT = re.compile(r"\d+(?:[.,]\d+)?\s*%")
+
+
+def hh_text_problems(text, facts):
+    """Checks for hh's own generated letter: it says DevSecOps and invents numbers like '100%'."""
+    problems = []
+    if "devsecops" in text.lower():
+        problems.append("DevSecOps")
+    if WRONG_EXP.search(text):
+        problems.append("4 years")
+    known = facts.replace(" ", "")
+    bad = sorted({m for m in PERCENT.findall(text) if m.replace(" ", "") not in known})
+    if bad:
+        problems.append("numbers not in resume: " + ", ".join(bad))
+    return problems
+
+
 def generate_letter(facts, vacancy, llm=call_llm):
     text = llm(build_messages(facts, vacancy))
     return text, check_letter(text, facts)

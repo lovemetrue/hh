@@ -291,6 +291,23 @@ def cmd_review(args):
             ctx.close()
 
 
+def generate_clean(page):
+    """Click hh's Generate until the text passes our checks (hh invents numbers and says DevSecOps)."""
+    facts = (HERE / "resume_facts.md").read_text()
+    for _ in range(5):
+        before = page.input_value(SEL["letter"])
+        page.click(SEL["generate"], timeout=5_000)
+        # generation is asynchronous (about 6 s): wait for a new, real text
+        page.wait_for_function(
+            "([sel, old]) => { const v = document.querySelector(sel)?.value || ''; return v.length > 100 && v !== old; }",
+            arg=[SEL["letter"], before], timeout=60_000)
+        problems = letter.hh_text_problems(page.input_value(SEL["letter"]), facts)
+        if not problems:
+            return
+        print(f"  hh text rejected: {problems}")
+    raise RuntimeError("hh generator kept producing rejected text")
+
+
 def attach_letter(page, text):
     """Fill the letter field and submit it. Empty text means: let hh generate it (hh PRO)."""
     if not page.is_visible(SEL["letter"]):
@@ -299,10 +316,7 @@ def attach_letter(page, text):
     if text:
         page.fill(SEL["letter"], text)
     else:
-        page.click(SEL["generate"], timeout=5_000)
-        # generation is asynchronous: wait until the field holds a real text
-        page.wait_for_function("sel => (document.querySelector(sel)?.value || '').length > 100",
-                               arg=SEL["letter"], timeout=60_000)
+        generate_clean(page)
     page.click(SEL["submit"])
     # text match: hh shows no data-qa for this toast
     page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=8_000)

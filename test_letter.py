@@ -141,3 +141,11 @@ def test_persistent_429_raises_rate_limited_and_slows_down(monkeypatch):
     with pytest.raises(letter.RateLimited):
         letter.call_llm([{"role": "user", "content": "x"}])
     assert letter._pace["interval"] == letter.MAX_INTERVAL
+
+
+def test_hh_text_problems():
+    facts = FACTS + " ускорил деплой на 30%"
+    assert letter.hh_text_problems("Ускорил деплой на 30%. Работаю с Kubernetes.", facts) == []
+    assert any("100%" in p for p in letter.hh_text_problems("Покрытие выросло до 100%.", facts))
+    assert "DevSecOps" in letter.hh_text_problems("Внедрил DevSecOps-контур.", facts)
+    assert "4 years" in letter.hh_text_problems("Опыт более 4 лет.", facts)
