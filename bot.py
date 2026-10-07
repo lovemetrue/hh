@@ -16,6 +16,7 @@ import store
 DAILY_LIMIT = 100
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
+HH_FALLBACK = os.environ.get("HH_FALLBACK", "1") != "0"  # no LLM letter -> use hh's Generate button
 MAX_MANUAL = 10  # vacancies with a test or questionnaire are common; a long run hints at a layout change
 
 
@@ -42,6 +43,7 @@ SEL = {
     "success": '[data-qa="vacancy-response-success-standard-notification"]',
     "attach": 'button[data-qa="responded-success-attach-cover-letter"]',
     "submit": '[data-qa="vacancy-response-letter-submit"]',
+    "generate": '[data-qa="generate-cover-letter"]',  # hh's own generator (paid hh PRO)
     "captcha": '[data-qa*="captcha"], iframe[src*="captcha"]',
 }
 
@@ -289,6 +291,23 @@ def cmd_review(args):
             ctx.close()
 
 
+def attach_letter(page, text):
+    """Fill the letter field and submit it. Empty text means: let hh generate it (hh PRO)."""
+    if not page.is_visible(SEL["letter"]):
+        page.click(SEL["attach"], timeout=5_000)
+    page.wait_for_selector(SEL["letter"], timeout=5_000)
+    if text:
+        page.fill(SEL["letter"], text)
+    else:
+        page.click(SEL["generate"], timeout=5_000)
+        # generation is asynchronous: wait until the field holds a real text
+        page.wait_for_function("sel => (document.querySelector(sel)?.value || '').length > 100",
+                               arg=SEL["letter"], timeout=60_000)
+    page.click(SEL["submit"])
+    # text match: hh shows no data-qa for this toast
+    page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=8_000)
+
+
 def respond(page, v):
     """Apply and attach the letter. Returns sent | sent-no-letter | already | manual."""
     go(page, v["url"])
@@ -301,18 +320,15 @@ def respond(page, v):
     buttons[0].click()
     try:
         # hh sends the response at once; any of these shows it went through (or asks for the letter).
-        page.wait_for_selector(f'{SEL["success"]}, {SEL["applied"]}, {SEL["letter"]}', timeout=3_000)
+        page.wait_for_selector(f'{SEL["success"]}, {SEL["applied"]}, {SEL["letter"]}', timeout=5_000)
     except PWTimeout:
         guard(page)
-        # the response may have gone through without a visible toast
-        return "sent-no-letter" if page.query_selector(SEL["applied"]) else "manual"
+        # the toast can lag: re-open the vacancy and look for the response marker
+        go(page, v["url"])
+        if not page.query_selector(SEL["applied"]):
+            return "manual"
     try:
-        if not page.is_visible(SEL["letter"]):
-            page.click(SEL["attach"], timeout=3_000)
-        page.fill(SEL["letter"], v["letter"])
-        page.click(SEL["submit"])
-        # text match: hh shows no data-qa for this toast
-        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=3_000)
+        attach_letter(page, v["letter"])
     except Exception as e:
         print(f"  letter not attached: {e}")
         return "sent-no-letter"
@@ -322,12 +338,16 @@ def respond(page, v):
 def cmd_send(args):
     conn = store.connect()
     print(f"title filter: {store.skip_excluded(conn)} vacancies skipped")
+    # Own LLM letters first; vacancies without one go out with hh's generated letter.
+    queue = list(store.by_status(conn, "drafted"))
+    if HH_FALLBACK:
+        queue += store.by_status(conn, "new")
     manual_streak = 0
     with sync_playwright() as p:
         ctx = open_context(p)
         try:
             page = first_page(ctx)
-            for v in store.by_status(conn, "drafted"):
+            for v in queue:
                 if store.count_today(conn, "sent") >= DAILY_LIMIT:
                     print(f"Daily limit {DAILY_LIMIT} reached.")
                     break
@@ -336,7 +356,8 @@ def cmd_send(args):
                     print(f"hold (contacts or wrong experience in letter): {clean(v['title'])} ({v['id']})")
                     continue
                 result = respond(page, v)
-                print(f"{result}: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
+                src = "own letter" if v["letter"] else "hh letter"
+                print(f"{result} [{src}]: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
                 if result == "already":
                     store.set_status(conn, v["id"], "skipped")
                 elif result == "manual":
