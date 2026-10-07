@@ -63,7 +63,7 @@ def first_page(ctx):
     return ctx.pages[0] if ctx.pages else ctx.new_page()
 
 
-def pause(lo=20, hi=60):
+def pause(lo=10, hi=30):
     time.sleep(random.uniform(lo, hi))
 
 
@@ -267,17 +267,18 @@ def respond(page, v):
         return "manual"
     buttons[0].click()
     try:
-        # hh sends the response at once; tests, questionnaires and popups never show this.
-        page.wait_for_selector(SEL["success"], timeout=15_000)
+        # hh sends the response at once; any of these shows it went through (or asks for the letter).
+        page.wait_for_selector(f'{SEL["success"]}, {SEL["applied"]}, {SEL["letter"]}', timeout=8_000)
     except PWTimeout:
         guard(page)
         return "manual"
     try:
-        page.click(SEL["attach"])
+        if not page.is_visible(SEL["letter"]):
+            page.click(SEL["attach"], timeout=3_000)
         page.fill(SEL["letter"], v["letter"])
         page.click(SEL["submit"])
         # text match: hh shows no data-qa for this toast
-        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=15_000)
+        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=8_000)
     except Exception as e:
         print(f"  letter not attached: {e}")
         return "sent-no-letter"
