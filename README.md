@@ -44,10 +44,9 @@
 должно, любой факт в нём бот может написать работодателю.
 
 ## Плейбук: как запускать
-
 ### Основной способ: одна команда
 
-    python3 bot.py auto "<URL поиска hh>" --pages 4 --max 100
+    python3 bot.py auto "https://hh.ru/search/vacancy?area=2&area=1&from=header-menu&hhtmFromLabel=drawer_filter&hhtmFrom=vacancy_search_list&text=DevOps&experience=between3And6&experience=between1And3&search_field=name&search_field=company_name&search_field=description&work_format=REMOTE&work_format=HYBRID&work_format=ON_SITE&enable_snippets=true&hhtmSource=vacancy_search_list&hhtmSourceLabel=vacancy_search_list&L_save_area=true" --pages 4 --max 50
 
 Что произойдёт по шагам:
 1. **Сбор.** Бот просматривает до `--pages` страниц выдачи (по 50 вакансий) и

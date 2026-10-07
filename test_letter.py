@@ -115,3 +115,14 @@ def test_call_llm_retries_on_502(monkeypatch):
 def test_english_letter_with_stray_cyrillic_skips_unknown_word_check():
     text = ("Hello, I run Kubernetes clusters and Docker builds at scale. " * 12) + "Спасибо."
     assert letter.check_letter(text, FACTS) == []
+
+
+def test_wrong_experience_claim_is_flagged():
+    for bad in (" Опыт более 4 лет.", " Мой опыт 4 года и 1 месяц.", " Имею четыре года опыта.", " Over 4 years of DevOps."):
+        assert any("wrong experience" in p for p in letter.check_letter(GOOD + bad, FACTS)), bad
+    for ok in (" Опыт 2,2 года.", " Работаю 24 года назад не начинал.", " Около 2 лет смежного опыта."):
+        assert not any("wrong experience" in p for p in letter.check_letter(GOOD + ok, FACTS)), ok
+
+
+def test_devsecops_word_is_flagged():
+    assert "mentions DevSecOps" in letter.check_letter(GOOD + " Работаю как DevSecOps.", FACTS)

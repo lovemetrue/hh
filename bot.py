@@ -121,7 +121,15 @@ def read_vacancy(page, url):
     return data
 
 
+def search_url(args):
+    url = args.url or os.environ.get("HH_SEARCH_URL")
+    if not url:
+        raise SystemExit("Pass a search URL or set HH_SEARCH_URL in .env")
+    return url
+
+
 def cmd_collect(args):
+    base_url = search_url(args)
     conn = store.connect()
     added = skipped = failed = streak = 0
     with sync_playwright() as p:
@@ -130,8 +138,8 @@ def cmd_collect(args):
             page = first_page(ctx)
             links = []
             for n in range(args.pages):
-                sep = "&" if "?" in args.url else "?"
-                go(page, f"{args.url}{sep}page={n}")
+                sep = "&" if "?" in base_url else "?"
+                go(page, f"{base_url}{sep}page={n}")
                 guard(page)
                 hrefs = [a.get_attribute("href") for a in page.query_selector_all(SEL["serp_link"])]
                 found = [h.split("?")[0] for h in hrefs if h and "/vacancy/" in h]
@@ -321,8 +329,8 @@ def cmd_send(args):
                     print(f"Daily limit {DAILY_LIMIT} reached.")
                     break
                 # No manual review by decision of the user; only contact leaks are held back.
-                if "phone number" in v["warnings"] or "e-mail" in v["warnings"]:
-                    print(f"hold (contacts in letter): {clean(v['title'])} ({v['id']})")
+                if any(w in v["warnings"] for w in ("phone number", "e-mail", "wrong experience")):
+                    print(f"hold (contacts or wrong experience in letter): {clean(v['title'])} ({v['id']})")
                     continue
                 result = respond(page, v)
                 print(f"{result}: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
@@ -360,7 +368,7 @@ def main():
     c.add_argument("url")
     c.set_defaults(fn=cmd_check_selectors)
     c = sub.add_parser("collect")
-    c.add_argument("url")
+    c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
     c.add_argument("--pages", type=int, default=2)
     c.add_argument("--max", type=int, default=0, help="stop after N new vacancies (0 = no cap)")
     c.set_defaults(fn=cmd_collect)
@@ -370,7 +378,7 @@ def main():
     sub.add_parser("review").set_defaults(fn=cmd_review)
     sub.add_parser("send").set_defaults(fn=cmd_send)
     c = sub.add_parser("auto")
-    c.add_argument("url")
+    c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
     c.add_argument("--pages", type=int, default=1)
     c.add_argument("--max", type=int, default=DAILY_LIMIT, help="new vacancies to collect and draft")
     c.set_defaults(fn=cmd_auto)

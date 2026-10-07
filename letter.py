@@ -29,7 +29,11 @@ SYSTEM = (
     "700-1000 characters, plain text, no emoji, no bullet lists, no placeholders, "
     "no contact details.\n"
     "Address the reader without a name unless the vacancy gives one.\n"
-    "Pick only the facts relevant to this vacancy; do not repeat the whole resume."
+    "Pick only the facts relevant to this vacancy; do not repeat the whole resume.\n"
+    "Experience: if you state years, say exactly '2,2 года DevOps-опыта' "
+    "(optionally 'плюс около 2 лет смежного опыта'); NEVER write 4 years of DevOps experience.\n"
+    "The candidate's role is DevOps: never write the word DevSecOps (security tools such as Trivy "
+    "or Checkov may be named as part of DevOps work)."
 )
 
 PHONE = re.compile(r"\+?\d[\d\s().-]{8,}\d")
@@ -38,6 +42,8 @@ EMOJI = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]{2,}")
 TRAIL = '.,;:!?)"\'-'  # trailing punctuation and hyphens glued to a Latin token
 CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+# the resume says 2,2 years of DevOps; "4 years" is the old, wrong claim (total IT tenure is not DevOps tenure)
+WRONG_EXP = re.compile(r"(?<![\d,.])(?:4|четыр\w+)\+?\s+(?:лет|год\w*)|\b(?:4|four)\+?\s+years", re.I)
 
 
 def build_messages(facts, vacancy):
@@ -88,6 +94,10 @@ def check_letter(text, facts):
         problems.append("e-mail")
     if EMOJI.search(text):
         problems.append("emoji")
+    if "devsecops" in text.lower():
+        problems.append("mentions DevSecOps")
+    if WRONG_EXP.search(text):
+        problems.append("wrong experience (4 years)")
     if not 700 <= len(text) <= 1000:
         problems.append(f"length {len(text)}")
     # Latin words missing from the facts hint at invented tech; skipped for English letters.
