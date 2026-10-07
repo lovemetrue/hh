@@ -3,7 +3,7 @@ from pathlib import Path
 import letter
 
 FACTS = "Kubernetes Docker Terraform Ansible GitLab DevSecOps"
-GOOD = "Здравствуйте! " + "Работаю с Kubernetes и Docker, автоматизирую инфраструктуру на Terraform и Ansible. " * 8
+GOOD = "Здравствуйте! " + "Работаю с Kubernetes и Docker, автоматизирую инфраструктуру на Terraform и Ansible. " * 9
 VAC = {"title": "DevOps", "company": "Acme", "description": "Нужен Kubernetes"}
 
 
@@ -16,6 +16,11 @@ def test_phone_email_and_unknown_tech_are_flagged():
     assert "e-mail" in letter.check_letter(GOOD + " me@example.com", FACTS)
     problems = letter.check_letter(GOOD + " Знаю Hadoop.", FACTS)
     assert any("Hadoop" in p for p in problems)
+
+
+def test_emoji_is_flagged():
+    problems = letter.check_letter(GOOD + " \U0001F525", FACTS)
+    assert "emoji" in problems
 
 
 def test_length_is_flagged():
@@ -37,6 +42,12 @@ def test_generate_uses_facts_and_vacancy_only():
     text, problems = letter.generate_letter(FACTS, VAC, llm=fake)
     assert text == GOOD and problems == []
     assert "Kubernetes" in seen["text"] and "Нужен Kubernetes" in seen["text"]
+
+
+def test_substring_not_confused_with_word():
+    # "Doc" is a substring of "Docker" but should be flagged as unknown
+    problems = letter.check_letter("Здравствуйте! Работаю с Doc технологиями " * 20, FACTS)
+    assert any("Doc" in p for p in problems)
 
 
 def test_resume_facts_file_has_no_contacts():

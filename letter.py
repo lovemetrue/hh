@@ -18,6 +18,7 @@ SYSTEM = (
 
 PHONE = re.compile(r"\+?\d[\d\s().-]{8,}\d")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+EMOJI = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]{2,}")
 CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
@@ -44,11 +45,13 @@ def check_letter(text, facts):
         problems.append("phone number")
     if EMAIL.search(text):
         problems.append("e-mail")
-    if not 500 <= len(text) <= 1300:
+    if EMOJI.search(text):
+        problems.append("emoji")
+    if not 700 <= len(text) <= 1000:
         problems.append(f"length {len(text)}")
     # Latin words missing from the facts hint at invented tech; skipped for English letters.
     if CYRILLIC.search(text):
-        known = facts.lower()
+        known = {w.rstrip('.,;:!?)"\'').lower() for w in LATIN.findall(facts)}
         unknown = sorted({w.rstrip('.,;:!?)"\'') for w in LATIN.findall(text)
                           if w.rstrip('.,;:!?)"\'').lower() not in known})
         if unknown:
