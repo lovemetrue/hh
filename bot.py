@@ -186,6 +186,7 @@ def cmd_collect(args):
 def cmd_draft(args):
     facts = (HERE / "resume_facts.md").read_text()
     conn = store.connect()
+    print(f"title filter: {store.skip_excluded(conn)} vacancies skipped")
     limit = max(0, min(args.limit, DAILY_LIMIT - store.count_today(conn, "drafted")))
     if limit == 0:
         print(f"Daily draft limit {DAILY_LIMIT} exhausted; nothing to draft.")
@@ -319,6 +320,7 @@ def respond(page, v):
 
 def cmd_send(args):
     conn = store.connect()
+    print(f"title filter: {store.skip_excluded(conn)} vacancies skipped")
     manual_streak = 0
     with sync_playwright() as p:
         ctx = open_context(p)

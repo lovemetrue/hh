@@ -56,3 +56,28 @@ def count_today(conn, status):
     return conn.execute(
         "SELECT COUNT(*) FROM vacancies WHERE status=? AND date(updated)=date('now','localtime')",
         (status,)).fetchone()[0]
+
+
+# Titles the bot never applies to: wrong level, or not a DevOps role.
+EXCLUDE_ALWAYS = re.compile(
+    r"стаж[её]р|intern\b|trainee|ученик|junior|джуниор|младш|тимлид|team\s*lead|tech\w*\s*lead|"
+    r"техническ\w+\s+лидер|руководител|head\s+of|начальник|\blead\b", re.I)
+# Sysadmin roles are fine when the title also says DevOps/SRE.
+EXCLUDE_UNLESS_DEVOPS = re.compile(r"администратор|sysadmin|системн\w+\s+инженер|техническ\w+\s+поддержк", re.I)
+KEEP = re.compile(r"devops|девопс|sre", re.I)
+
+
+def title_excluded(title):
+    return bool(EXCLUDE_ALWAYS.search(title)) or (
+        bool(EXCLUDE_UNLESS_DEVOPS.search(title)) and not KEEP.search(title))
+
+
+def skip_excluded(conn):
+    """Mark queued (new/drafted) vacancies with an excluded title as skipped; returns the count."""
+    n = 0
+    for status in ("new", "drafted"):
+        for r in by_status(conn, status):
+            if title_excluded(r["title"]):
+                set_status(conn, r["id"], "skipped")
+                n += 1
+    return n

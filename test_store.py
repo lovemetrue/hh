@@ -29,3 +29,21 @@ def test_add_is_idempotent_and_status_flow():
     assert store.count_today(conn, "sent") == 0
     store.set_status(conn, "1", "sent")
     assert store.count_today(conn, "sent") == 1
+
+
+def test_title_filter():
+    for bad in ("Стажер DevOps / SRE", "Junior DevOps", "Технический лидер", "Team Lead DevOps",
+                "Системный администратор Linux", "Младший инженер инфраструктуры", "DevOps инженер (ученик)"):
+        assert store.title_excluded(bad), bad
+    for ok in ("DevOps-инженер", "DevOps / Системный администратор Linux", "SRE-инженер",
+               "Старший DevOps-инженер", "Ведущий DevOps-инженер", "Platform Engineer", "Инженер Kubernetes"):
+        assert not store.title_excluded(ok), ok
+
+
+def test_skip_excluded_marks_queue():
+    conn = store.connect(":memory:")
+    store.add(conn, {**vac("1"), "title": "Стажер DevOps"})
+    store.add(conn, {**vac("2"), "title": "DevOps-инженер"})
+    assert store.skip_excluded(conn) == 1
+    assert [r["id"] for r in store.by_status(conn, "skipped")] == ["1"]
+    assert [r["id"] for r in store.by_status(conn, "new")] == ["2"]
