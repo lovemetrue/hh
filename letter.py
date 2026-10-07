@@ -1,7 +1,14 @@
 import json
 import os
 import re
+import ssl
 import urllib.request
+
+try:  # python.org builds on macOS ship without root certs; certifi fixes that
+    import certifi
+    SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CTX = None
 
 URL = "https://router.requesty.ai/v1/chat/completions"
 MODEL = "google/gemma-4-31b-it"
@@ -20,6 +27,7 @@ PHONE = re.compile(r"\+?\d[\d\s().-]{8,}\d")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 EMOJI = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]{2,}")
+TRAIL = '.,;:!?)"\'-'  # trailing punctuation and hyphens glued to a Latin token
 CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
@@ -38,7 +46,7 @@ def call_llm(messages):
     req = urllib.request.Request(
         URL, json.dumps({"model": MODEL, "messages": messages}).encode(),
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=120, context=SSL_CTX) as r:
         content = json.load(r)["choices"][0]["message"]["content"]
     if not content or not content.strip():
         raise RuntimeError("LLM returned empty content")
@@ -57,9 +65,9 @@ def check_letter(text, facts):
         problems.append(f"length {len(text)}")
     # Latin words missing from the facts hint at invented tech; skipped for English letters.
     if CYRILLIC.search(text):
-        known = {w.rstrip('.,;:!?)"\'').lower() for w in LATIN.findall(facts)}
-        unknown = sorted({w.rstrip('.,;:!?)"\'') for w in LATIN.findall(text)
-                          if w.rstrip('.,;:!?)"\'').lower() not in known})
+        known = {w.rstrip(TRAIL).lower() for w in LATIN.findall(facts)}
+        unknown = sorted({w.rstrip(TRAIL) for w in LATIN.findall(text)
+                          if w.rstrip(TRAIL).lower() not in known})
         if unknown:
             problems.append("not in resume: " + ", ".join(unknown))
     return problems

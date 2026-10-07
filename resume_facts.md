@@ -32,5 +32,8 @@
 - Zabbix, Observium, NetUp, The Dude.
 - За 3 месяца повышен до второго грейда.
 
+## Навыки (из раздела резюме)
+Linux, Ubuntu, Python, Bash, Shell scripting, Docker, Kubernetes, Helm, GitLab CI, CI/CD, Terraform, Ansible, Vault, Trivy, SAST, SecOps, SDLC, PostgreSQL, MongoDB, RabbitMQ, Git, Zabbix, DNS, TCP/IP, модель OSI.
+
 ## Раньше
 - YCLIENTS, техподдержка (2016-2017); НПО Взлёт, помощник сисадмина, bash-скрипты (2015).
