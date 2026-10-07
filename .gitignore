@@ -1,0 +1,4 @@
+.env
+.profile/
+state.sqlite
+__pycache__/
