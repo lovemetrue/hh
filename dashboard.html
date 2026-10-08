@@ -42,6 +42,7 @@
                        background: rgba(0,0,0,.25); color: var(--text); font-size: 16px; font-weight: 600; }
   .chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent;
           color: var(--muted); cursor: pointer; font-size: 12.5px; }
+  .chip.active { color: var(--text); border-color: var(--accent); background: rgba(110,231,200,.08); }
   .chip:hover { color: var(--text); border-color: var(--accent2); }
   label.check { display: flex; align-items: center; gap: 8px; color: var(--muted); cursor: pointer; }
   button.main { padding: 10px 20px; border-radius: 12px; border: 0; cursor: pointer; font-weight: 700; font-size: 14px;
@@ -129,6 +130,18 @@
     <div class="msg" id="msg"></div>
   </div>
 
+  <div class="card" id="manualCard" style="margin-bottom:14px">
+    <h2>Пропущено программой: откликнуться вручную</h2>
+    <div class="controls" style="margin-bottom:6px">
+      <button class="chip active" id="tabManual"></button>
+      <button class="chip" id="tabNoletter"></button>
+      <button class="chip" id="copyLinks" style="margin-left:auto">Скопировать ссылки</button>
+    </div>
+    <div class="sub" id="manualHint" style="margin-bottom:8px"></div>
+    <table><tbody id="manualList"></tbody></table>
+    <button class="chip" id="manualMore" style="display:none;margin-top:10px"></button>
+  </div>
+
   <div class="card" style="margin-bottom:14px">
     <h2>База найденных вакансий</h2>
     <div class="meta" id="dbmeta" style="margin:0 0 12px"></div>
@@ -148,12 +161,6 @@
   <div class="card" style="margin-bottom:14px">
     <h2>Последние отклики</h2>
     <table><thead><tr><th>Время</th><th>Компания</th><th>Вакансия</th><th>Письмо</th></tr></thead><tbody id="recent"></tbody></table>
-  </div>
-
-  <div class="card" style="margin-bottom:14px">
-    <h2>Откликнуться вручную <span class="tag" id="manualCount" style="margin-left:6px"></span></h2>
-    <div class="sub" style="margin-bottom:8px">Вакансии, где hh просит анкету или тест, и отклики, у которых не приложилось письмо.</div>
-    <table><tbody id="manualList"></tbody></table>
   </div>
 
   <div class="card"><details><summary>Журнал последнего запуска</summary><pre id="log">—</pre></details></div>
@@ -210,9 +217,16 @@ function renderStats(s) {
   const k = $("kpis"); k.textContent = "";
   const items = [
     [s.today + " / " + s.daily_limit, "сегодня", true], [s.week, "за 7 дней"], [s.total, "всего отправлено"],
-    [s.queue, "в очереди"], [s.counts.manual || 0, "нужен ручной отклик"], [s.counts.skipped || 0, "пропущено"]
+    [s.queue, "в очереди"], [s.counts.manual || 0, "нужен ручной отклик"], [s.counts.skipped || 0, "отсеяно фильтрами"]
   ];
-  for (const [v, l, hi] of items) { const d = el("div", null, "card kpi" + (hi ? " hi" : "")); d.append(el("div", v, "v"), el("div", l, "l")); k.append(d); }
+  for (const [v, l, hi] of items) {
+    const d = el("div", null, "card kpi" + (hi ? " hi" : "")); d.append(el("div", v, "v"), el("div", l, "l"));
+    if (l === "нужен ручной отклик") {
+      d.style.cursor = "pointer"; d.title = "Открыть список";
+      d.onclick = () => { manualTab = "manual"; renderManual(lastStats); $("manualCard").scrollIntoView({ behavior: "smooth" }); };
+    }
+    k.append(d);
+  }
 
   window.lastCounts = s.counts;
   const dm = $("dbmeta"); dm.textContent = "";
@@ -251,30 +265,42 @@ function renderStats(s) {
   }
 }
 
+let manualTab = "manual", manualAll = false, lastStats = null;
+
 function renderManual(s) {
+  lastStats = s;
+  const isManual = manualTab === "manual";
+  const list = isManual ? s.manual_list : s.noletter_list;
+  $("tabManual").textContent = "Нужен ручной отклик (" + s.manual_list.length + ")";
+  $("tabNoletter").textContent = "Отправлено без письма (" + s.noletter_list.length + ")";
+  $("tabManual").classList.toggle("active", isManual);
+  $("tabNoletter").classList.toggle("active", !isManual);
+  $("manualHint").textContent = isManual
+    ? "hh просит анкету или тест, либо кнопка отклика недоступна: откройте вакансию и откликнитесь сами."
+    : "Отклик ушёл, но письмо не приложилось: добавьте его вручную (письмо можно скопировать).";
   const tb = $("manualList"); tb.textContent = "";
-  const total = s.manual_list.length + s.noletter_list.length;
-  $("manualCount").textContent = total;
-  const rowFor = (v, kind) => {
+  const shown = manualAll ? list : list.slice(0, 40);
+  const mark = async (id, action) => { await api("/api/mark", { id, action }); tickStats(); };
+  const btn = (label, fn) => { const b = el("button", label, "chip"); b.style.marginLeft = "6px"; b.onclick = fn; return b; };
+  for (const v of shown) {
     const tr = el("tr"), a = el("a", v.title); a.href = v.url; a.target = "_blank"; a.rel = "noopener";
-    const t1 = el("td"); t1.append(a); t1.append(el("div", v.company, "sub"));
-    const t2 = el("td", kind === "manual" ? "нужен ручной отклик" : "отправлено без письма", "sub");
+    const t1 = el("td"); t1.append(a, el("div", v.company, "sub"));
+    const t2 = el("td", v.updated.slice(5, 16), "sub");
     const t3 = el("td"); t3.style.textAlign = "right"; t3.style.whiteSpace = "nowrap";
-    const btn = (label, fn) => { const b = el("button", label, "chip"); b.style.marginLeft = "6px"; b.onclick = fn; return b; };
-    const mark = async action => { await api("/api/mark", { id: v.id, action }); tickStats(); };
-    if (kind === "manual") {
-      t3.append(btn("Откликнулся", () => mark("done")), btn("Не интересно", () => mark("dismiss")));
+    if (isManual) {
+      t3.append(btn("Откликнулся", () => mark(v.id, "done")), btn("Не интересно", () => mark(v.id, "dismiss")));
     } else {
       if (v.letter) t3.append(btn("Копировать письмо", async e => {
         await navigator.clipboard.writeText(v.letter); e.target.textContent = "Скопировано";
       }));
-      t3.append(btn("Письмо приложено", () => mark("letter_done")));
+      t3.append(btn("Письмо приложено", () => mark(v.id, "letter_done")));
     }
-    tr.append(t1, t2, t3); return tr;
-  };
-  for (const v of s.manual_list) tb.append(rowFor(v, "manual"));
-  for (const v of s.noletter_list) tb.append(rowFor(v, "noletter"));
-  if (!total) { const tr = el("tr"), td = el("td", "Пусто: всё отправлено автоматически"); td.className = "sub"; tr.append(td); tb.append(tr); }
+    tr.append(t1, t2, t3); tb.append(tr);
+  }
+  if (!list.length) { const tr = el("tr"), td = el("td", "Пусто: здесь ничего не требуется", "sub"); tr.append(td); tb.append(tr); }
+  const more = $("manualMore");
+  more.style.display = list.length > shown.length ? "" : "none";
+  more.textContent = "Показать все (" + list.length + ")";
 }
 
 function renderRun(r) {
@@ -343,6 +369,14 @@ async function clean(statuses, label) {
   const res = await api("/api/clean", { statuses });
   $("cleanMsg").textContent = res.message || ""; tickStats();
 }
+$("tabManual").onclick = () => { manualTab = "manual"; manualAll = false; renderManual(lastStats); };
+$("tabNoletter").onclick = () => { manualTab = "noletter"; manualAll = false; renderManual(lastStats); };
+$("manualMore").onclick = () => { manualAll = true; renderManual(lastStats); };
+$("copyLinks").onclick = async e => {
+  const list = manualTab === "manual" ? lastStats.manual_list : lastStats.noletter_list;
+  await navigator.clipboard.writeText(list.map(v => v.url).join("\n")); e.target.textContent = "Скопировано " + list.length;
+  setTimeout(() => { e.target.textContent = "Скопировать ссылки"; }, 2500);
+};
 $("cleanQueue").onclick = () => clean(["new", "drafted"], "новые и с письмами");
 $("cleanAll").onclick = () => clean(["new", "drafted", "manual", "skipped"], "все неотправленные");
 
