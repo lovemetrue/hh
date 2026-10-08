@@ -82,21 +82,34 @@ EXCLUDE_UNLESS_DEVOPS = re.compile(r"администратор|sysadmin|сис�
 KEEP = re.compile(r"devops|девопс|sre", re.I)
 
 
-# Employers the bot never applies to (user decision): Sber and all its subsidiaries.
-EXCLUDE_COMPANY = re.compile(r"сбер|sber", re.I)
+# Sber and all its subsidiaries are never applied to (user decision): matched in the company name, the
+# title AND the description (agencies place vacancies for Sber under their own name).
+# Latin look-alike letters are folded ("Cбер" with a Latin C), and words like "сбережения" are not hits.
+_L2C = str.maketrans("abcehkmoptxy", "авсенкмортху")
+_C2L = str.maketrans("авсенкмортху", "abcehkmoptxy")
+SBER_CYR = re.compile(r"(?<![а-я])сбер(?!ег|еч|еж)")
+SBER_LAT = re.compile(r"(?<![a-z])sber")
 
 
-def title_excluded(title, company=""):
-    return bool(EXCLUDE_COMPANY.search(company or "")) or bool(EXCLUDE_ALWAYS.search(title)) or (
+def is_sber(*texts):
+    for t in texts:
+        t = (t or "").lower()
+        if SBER_CYR.search(t.translate(_L2C)) or SBER_LAT.search(t.translate(_C2L)):
+            return True
+    return False
+
+
+def title_excluded(title, company="", description=""):
+    return is_sber(company, title, description) or bool(EXCLUDE_ALWAYS.search(title)) or (
         bool(EXCLUDE_UNLESS_DEVOPS.search(title)) and not KEEP.search(title))
 
 
 def skip_excluded(conn):
-    """Mark queued (new/drafted) vacancies with an excluded title as skipped; returns the count."""
+    """Mark queued (new/drafted/manual) vacancies that match the exclusion rules as skipped; returns the count."""
     n = 0
-    for status in ("new", "drafted"):
+    for status in ("new", "drafted", "manual"):
         for r in by_status(conn, status):
-            if title_excluded(r["title"], r["company"]):
+            if title_excluded(r["title"], r["company"], r["description"]):
                 set_status(conn, r["id"], "skipped")
                 n += 1
     return n

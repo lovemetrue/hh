@@ -17,7 +17,7 @@ import letter
 import notify
 import store
 
-DAILY_LIMIT = 100
+DAILY_LIMIT = 250
 HERE = Path(__file__).parent
 MAX_FAILURES = 3
 HH_FALLBACK = os.environ.get("HH_FALLBACK", "1") != "0"  # no LLM letter -> use hh's Generate button
@@ -407,12 +407,20 @@ def attach_letter(page, text):
     return text
 
 
+def page_text(page, key):
+    el = page.query_selector(SEL[key])
+    return el.inner_text() if el else ""
+
+
 def respond(page, v):
-    """Apply and attach the letter. Returns (sent | sent-no-letter | already | manual, letter text)."""
+    """Apply and attach the letter. Returns (sent | sent-no-letter | already | excluded | manual, letter text)."""
     go(page, v["url"])
     guard(page)
     if page.query_selector(SEL["applied"]):
         return "already", ""
+    # Last check before the click, on what the page really says (the stored row can be stale or incomplete).
+    if store.title_excluded(page_text(page, "title"), page_text(page, "company"), page_text(page, "description")):
+        return "excluded", ""
     buttons = [b for b in page.query_selector_all(SEL["apply"]) if b.is_visible()]
     if not buttons:
         return "manual", ""
@@ -484,7 +492,7 @@ def cmd_send(args):
                     err_streak = 0
                     src = "own letter" if v["letter"] else "hh letter"
                     print(f"{result} [{src}]: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
-                    if result == "already":
+                    if result in ("already", "excluded"):
                         store.set_status(conn, v["id"], "skipped")
                         report(skipped=RUN["skipped"] + 1)
                     elif result == "manual":

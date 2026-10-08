@@ -22,7 +22,7 @@ LOG_FILE = DATA / "run.log"
 SESSION_FILE = DATA / "session.json"
 HOST = os.environ.get("DASH_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DASH_PORT", 8765))
-DAILY_LIMIT = 100
+DAILY_LIMIT = 250
 
 lock = threading.Lock()
 proc = None  # the bot process started from this dashboard

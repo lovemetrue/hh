@@ -101,3 +101,18 @@ def test_company_filter_excludes_sber_family():
         assert store.title_excluded("DevOps-инженер", company), company
     for company in ("Яндекс", "Альфа-Банк", "Tinkoff", ""):
         assert not store.title_excluded("DevOps-инженер", company), company
+
+
+def test_sber_is_matched_in_company_title_and_description():
+    assert store.title_excluded("DevOps", "ИЦ АЙ-ТЕКО", "Проект для Сбербанка, команда AI HUB")
+    assert store.title_excluded("DevOps в Сбере", "Рога и копыта")
+    assert store.title_excluded("DevOps", "Агентство", "заказчик: SberTech")
+    assert store.title_excluded("DevOps", "Cбер. IT")      # a Latin C hiding in the name
+    assert store.title_excluded("DevOps", "SBER")
+    assert store.title_excluded("DevOps", "x", "работа в СБЕРБАНК")
+
+
+def test_sber_filter_has_no_false_positives():
+    assert not store.title_excluded("DevOps", "Яндекс", "накопим сбережения, сберечь время, Super Berry")
+    assert not store.title_excluded("DevOps", "Альфа-Банк", "Kubernetes, GitLab CI")
+    assert not store.title_excluded("DevOps", "Tinkoff", "Hyperberry, Passberry, ресурсы без сбоев")
