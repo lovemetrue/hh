@@ -14,6 +14,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
 import letter
+import notify
 import store
 
 DAILY_LIMIT = 100
@@ -146,13 +147,20 @@ def guard(page):
     prev = RUN.get("state", "running")
     report(state="captcha_wait", current="капча: решите её в окне браузера (localhost:6080)")
     print("captcha shown: waiting up to 10 min for you to solve it in the browser window")
-    deadline = time.time() + 600
-    while time.time() < deadline and not CANCEL:
+    alert = ("⚠ hh-bot: hh показал капчу. Откройте на компьютере http://localhost:6080/vnc.html"
+             "?autoconnect=1&resize=scale и пройдите проверку, запуск ждёт до 10 минут.")
+    notify.send(alert)
+    started = last_alert = time.time()
+    while time.time() - started < 600 and not CANCEL:
         time.sleep(2)
         if not page.query_selector(SEL["captcha"]):
             page.wait_for_load_state("domcontentloaded")
             report(state=prev, current="")
             return
+        if time.time() - last_alert > 240:  # one reminder, then silence
+            notify.send("⏰ hh-bot: капча всё ещё ждёт, осталось около 2 минут до остановки запуска.")
+            last_alert = float("inf")
+    notify.send("⛔ hh-bot: капча не решена вовремя, запуск остановлен.")
     raise CaptchaBlocked("captcha was not solved in time")
 
 
@@ -517,6 +525,12 @@ def cmd_clean(args):
     print(f"removed {store.clean(conn, statuses)} vacancies ({', '.join(statuses)}); backup: {store.DB_PATH}.bak")
 
 
+def cmd_notify_test(args):
+    ok = notify.send("✅ hh-bot: тестовое уведомление, Telegram настроен.")
+    print("sent" if ok else "not sent: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (and TELEGRAM_PROXY if Telegram is blocked)")
+    sys.exit(0 if ok else 1)
+
+
 def cmd_export_session(args):
     """Save the logged-in host browser session for the Docker container."""
     DATA.mkdir(parents=True, exist_ok=True)
@@ -559,6 +573,7 @@ def main():
     c.add_argument("--limit", type=int, default=0, help="stop after N responses (0 = whole queue)")
     c.set_defaults(fn=cmd_send)
     sub.add_parser("export-session").set_defaults(fn=cmd_export_session)
+    sub.add_parser("notify-test").set_defaults(fn=cmd_notify_test)
     c = sub.add_parser("clean")
     c.add_argument("--status", action="append", default=[], choices=store.CLEANABLE,
                    help="repeatable; default: new, drafted, manual, skipped")

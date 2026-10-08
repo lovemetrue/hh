@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir playwright==1.63.0 certifi \
 RUN apt-get update && apt-get install -y --no-install-recommends xauth x11vnc novnc websockify \
  && rm -rf /var/lib/apt/lists/*
 
-COPY bot.py letter.py store.py dashboard.py dashboard.html resume_facts.md entrypoint.sh ./
+COPY bot.py letter.py notify.py store.py dashboard.py dashboard.html resume_facts.md entrypoint.sh ./
 
 EXPOSE 8765 6080
 CMD ["sh", "entrypoint.sh"]
