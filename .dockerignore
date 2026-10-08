@@ -1,0 +1,10 @@
+.env
+.profile
+.git
+.superpowers
+data
+docs
+state.sqlite
+__pycache__
+test_*.py
+README.md

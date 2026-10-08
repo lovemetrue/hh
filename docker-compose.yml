@@ -1,0 +1,12 @@
+services:
+  dashboard:
+    build: .
+    container_name: hh-bot
+    restart: unless-stopped          # always on: survives crashes and Docker restarts
+    init: true                       # reaps leftover browser processes
+    shm_size: 1gb                    # Chromium needs a larger /dev/shm
+    env_file: .env                   # REQUESTY_API_KEY, HH_SEARCH_URL (never baked into the image)
+    ports:
+      - "127.0.0.1:8765:8765"        # local only
+    volumes:
+      - ./data:/data                 # database, hh session, run state and log

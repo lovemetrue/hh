@@ -507,7 +507,10 @@ def cmd_export_session(args):
 
 def cmd_auto(args):
     args.limit = args.max
+    report(pid=os.getpid(), state="collecting", target=args.max, sent=0, no_letter=0, manual=0,
+           skipped=0, errors=0, current="сбор вакансий", started=time.time(), finished=None)
     cmd_collect(args)
+    report(state="drafting", current="генерация писем")
     cmd_draft(args)
     cmd_send(args)
 
