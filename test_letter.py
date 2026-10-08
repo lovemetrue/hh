@@ -149,3 +149,12 @@ def test_hh_text_problems():
     assert any("100%" in p for p in letter.hh_text_problems("Покрытие выросло до 100%.", facts))
     assert "DevSecOps" in letter.hh_text_problems("Внедрил DevSecOps-контур.", facts)
     assert "4 years" in letter.hh_text_problems("Опыт более 4 лет.", facts)
+
+
+def test_sanitize_hh_text_drops_bad_sentences():
+    facts = FACTS + " ускорил деплой на 30%"
+    raw = ("Здравствуйте! Ускорил деплой на 30%. Внедрил DevSecOps-контур. "
+           "Покрытие выросло до 100%. Работаю с Kubernetes.")
+    out = letter.sanitize_hh_text(raw, facts)
+    assert "DevSecOps" not in out and "100%" not in out
+    assert "30%" in out and "Kubernetes" in out

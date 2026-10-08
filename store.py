@@ -1,5 +1,9 @@
+import os
 import re
 import sqlite3
+from pathlib import Path
+
+DB_PATH = os.environ.get("STATE_DB") or str(Path(os.environ.get("DATA_DIR") or Path(__file__).parent / "data") / "state.sqlite")
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS vacancies(
   id TEXT PRIMARY KEY, url TEXT, title TEXT, company TEXT, description TEXT,
@@ -7,10 +11,17 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS vacancies(
   updated TEXT DEFAULT (datetime('now','localtime')))"""
 
 
-def connect(path="state.sqlite"):
-    conn = sqlite3.connect(path)
+def connect(path=None):
+    path = path or DB_PATH
+    if path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute(SCHEMA)
+    if "note" not in {r["name"] for r in conn.execute("PRAGMA table_info(vacancies)")}:
+        # which letter went out: own (LLM) | hh (hh generator) | none (response without letter)
+        conn.execute("ALTER TABLE vacancies ADD COLUMN note TEXT DEFAULT ''")
+        conn.commit()
     return conn
 
 
@@ -42,6 +53,10 @@ def _update(conn, vid, **cols):
 
 def set_draft(conn, vid, letter, warnings):
     _update(conn, vid, status="drafted", letter=letter, warnings=warnings)
+
+
+def set_sent(conn, vid, note):
+    _update(conn, vid, status="sent", note=note)
 
 
 def set_letter(conn, vid, letter):

@@ -1,4 +1,5 @@
 .env
 .profile/
-state.sqlite
 __pycache__/
+data/
+state.sqlite

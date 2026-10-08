@@ -137,6 +137,13 @@ def hh_text_problems(text, facts):
     return problems
 
 
+def sanitize_hh_text(text, facts):
+    """Drop sentences of hh's generated letter that break our rules; keeps the rest."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in parts if not hh_text_problems(s, facts)]
+    return " ".join(kept)
+
+
 def generate_letter(facts, vacancy, llm=call_llm):
     text = llm(build_messages(facts, vacancy))
     return text, check_letter(text, facts)

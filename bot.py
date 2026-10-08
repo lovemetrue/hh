@@ -1,8 +1,11 @@
 import argparse
+import json
 import os
 import random
 import shlex
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -18,6 +21,33 @@ HERE = Path(__file__).parent
 MAX_FAILURES = 3
 HH_FALLBACK = os.environ.get("HH_FALLBACK", "1") != "0"  # no LLM letter -> use hh's Generate button
 MAX_MANUAL = 10  # vacancies with a test or questionnaire are common; a long run hints at a layout change
+MAX_ERRORS = 5  # consecutive page/network errors before a send run gives up
+DATA = Path(os.environ.get("DATA_DIR") or HERE / "data")
+STATE_FILE = DATA / "run_state.json"  # progress of the current/last send run, read by the dashboard
+SESSION_FILE = DATA / "session.json"  # hh cookies exported from the host browser (container mode)
+CANCEL = False
+RUN = {}
+
+
+class CaptchaBlocked(RuntimeError):
+    pass
+
+
+def report(**kw):
+    RUN.update(kw)
+    DATA.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(RUN, ensure_ascii=False))
+    tmp.replace(STATE_FILE)
+
+
+def on_signal(signum, frame):
+    # First signal: finish the current vacancy and stop cleanly. Second: abort now.
+    global CANCEL
+    if CANCEL:
+        raise KeyboardInterrupt
+    CANCEL = True
+    print("cancel requested: finishing the current vacancy, then stopping")
 
 
 class AlreadyApplied(RuntimeError):
@@ -59,25 +89,57 @@ def load_env(path=HERE / ".env"):
 
 
 def open_context(p):
+    if os.environ.get("HH_USE_SESSION") == "1":
+        if not SESSION_FILE.exists():
+            raise RuntimeError("no hh session: run `python3 bot.py export-session` on the host first")
+        browser = p.chromium.launch(headless=False)  # headed under Xvfb, so the browser looks normal
+        return browser.new_context(storage_state=str(SESSION_FILE), locale="ru-RU")
     return p.chromium.launch_persistent_context(PROFILE, headless=False, locale="ru-RU")
+
+
+def close_ctx(ctx):
+    if os.environ.get("HH_USE_SESSION") == "1":
+        try:
+            ctx.storage_state(path=str(SESSION_FILE))  # keep the session cookies fresh
+        except Exception:
+            pass
+        browser = ctx.browser
+        ctx.close()
+        if browser:
+            browser.close()
+        return
+    ctx.close()
 
 
 def go(page, url):
     # domcontentloaded: hh pages are heavy (ads, trackers); waiting for "load" timed out at 30 s.
-    page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+    for attempt in (1, 2):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            return
+        except Exception:
+            if attempt == 2:  # a flaky TLS/network error gets one retry
+                raise
+            time.sleep(3)
 
 
 def first_page(ctx):
     return ctx.pages[0] if ctx.pages else ctx.new_page()
 
 
-def pause(lo=10, hi=30):
-    time.sleep(random.uniform(lo, hi))
+def pause(lo=None, hi=None):
+    lo = lo if lo is not None else float(os.environ.get("PAUSE_MIN", 15))
+    hi = hi if hi is not None else float(os.environ.get("PAUSE_MAX", 40))
+    end = time.time() + random.uniform(lo, hi)
+    while time.time() < end and not CANCEL:
+        time.sleep(0.5)
 
 
 def guard(page):
     # Hand control to the human on captcha; never try to solve it.
     if page.query_selector(SEL["captcha"]):
+        if not sys.stdin.isatty():
+            raise CaptchaBlocked("captcha shown: solve it on the host, then re-run export-session")
         input("Captcha or anti-bot check shown. Solve it in the browser, then press Enter... ")
 
 
@@ -88,7 +150,7 @@ def cmd_login(args):
             go(first_page(ctx), "https://hh.ru/account/login")
             input("Log in to hh.ru in the browser window, then press Enter here... ")
         finally:
-            ctx.close()
+            close_ctx(ctx)
 
 
 def cmd_check_selectors(args):
@@ -101,7 +163,7 @@ def cmd_check_selectors(args):
             for key, sel in SEL.items():
                 print(f"{key:12} {len(page.query_selector_all(sel))} match(es)")
         finally:
-            ctx.close()
+            close_ctx(ctx)
 
 
 def read_vacancy(page, url):
@@ -152,7 +214,7 @@ def cmd_collect(args):
                     pause()
             urls = list(dict.fromkeys(links))
             for i, url in enumerate(urls):
-                if args.max and added >= args.max:
+                if CANCEL or (args.max and added >= args.max):
                     break
                 exists = conn.execute("SELECT 1 FROM vacancies WHERE id=?",
                                       (store.vid_from_url(url),)).fetchone()
@@ -179,7 +241,7 @@ def cmd_collect(args):
                 if i < len(urls) - 1:
                     pause()
         finally:
-            ctx.close()
+            close_ctx(ctx)
     print(f"added {added} new, skipped {skipped} known, {failed} failed")
 
 
@@ -194,6 +256,8 @@ def cmd_draft(args):
     rows = store.by_status(conn, "new")[:limit]
     limited = 0
     for v in rows:
+        if CANCEL:
+            break
         try:
             text, problems = letter.generate_letter(facts, dict(v))
         except letter.RateLimited:
@@ -288,38 +352,37 @@ def cmd_review(args):
                             store.set_status(conn, v["id"], "sent")
                         break
         finally:
-            ctx.close()
+            close_ctx(ctx)
 
 
-def generate_clean(page):
-    """Click hh's Generate until the text passes our checks (hh invents numbers and says DevSecOps)."""
-    facts = (HERE / "resume_facts.md").read_text()
-    for _ in range(5):
-        before = page.input_value(SEL["letter"])
-        page.click(SEL["generate"], timeout=5_000)
-        # generation is asynchronous (about 6 s): wait for a new, real text
-        page.wait_for_function(
-            "([sel, old]) => { const v = document.querySelector(sel)?.value || ''; return v.length > 100 && v !== old; }",
-            arg=[SEL["letter"], before], timeout=60_000)
-        problems = letter.hh_text_problems(page.input_value(SEL["letter"]), facts)
-        if not problems:
-            return
-        print(f"  hh text rejected: {problems}")
-    raise RuntimeError("hh generator kept producing rejected text")
-
-
-def attach_letter(page, text):
-    """Fill the letter field and submit it. Empty text means: let hh generate it (hh PRO)."""
+def open_letter_form(page):
+    # The letter is offered only right after the response: wait for the button or the field itself.
+    page.wait_for_selector(f'{SEL["attach"]}, {SEL["letter"]}', timeout=15_000)
     if not page.is_visible(SEL["letter"]):
         page.click(SEL["attach"], timeout=5_000)
     page.wait_for_selector(SEL["letter"], timeout=5_000)
-    if text:
-        page.fill(SEL["letter"], text)
-    else:
-        generate_clean(page)
-    page.click(SEL["submit"])
-    # text match: hh shows no data-qa for this toast
-    page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=8_000)
+
+
+def attach_letter(page, text):
+    """Put a letter into the form and submit it. Empty text: use hh's generated one, cleaned."""
+    open_letter_form(page)
+    if not text:
+        page.click(SEL["generate"], timeout=5_000)
+        # generation is asynchronous (about 6 s); the button is one-shot per open form
+        page.wait_for_function("sel => (document.querySelector(sel)?.value || '').length > 100",
+                               arg=SEL["letter"], timeout=60_000)
+        facts = (HERE / "resume_facts.md").read_text()
+        text = letter.sanitize_hh_text(page.input_value(SEL["letter"]), facts)
+        if len(text) < 250:
+            raise RuntimeError("hh letter unusable after cleaning")
+    page.fill(SEL["letter"], text)
+    page.click(SEL["submit"], timeout=10_000)
+    try:
+        # text match: hh shows no data-qa for this toast
+        page.get_by_text("Сопроводительное письмо отправлено").first.wait_for(timeout=10_000)
+    except PWTimeout:
+        if page.is_visible(SEL["letter"]):  # form still open: the letter was not delivered
+            raise
 
 
 def respond(page, v):
@@ -344,7 +407,7 @@ def respond(page, v):
     try:
         attach_letter(page, v["letter"])
     except Exception as e:
-        print(f"  letter not attached: {e}")
+        print(f"  letter not attached: {str(e)[:160]}")
         return "sent-no-letter"
     return "sent"
 
@@ -356,37 +419,88 @@ def cmd_send(args):
     queue = list(store.by_status(conn, "drafted"))
     if HH_FALLBACK:
         queue += store.by_status(conn, "new")
-    manual_streak = 0
-    with sync_playwright() as p:
-        ctx = open_context(p)
-        try:
-            page = first_page(ctx)
-            for v in queue:
-                if store.count_today(conn, "sent") >= DAILY_LIMIT:
-                    print(f"Daily limit {DAILY_LIMIT} reached.")
-                    break
-                # No manual review by decision of the user; only contact leaks are held back.
-                if any(w in v["warnings"] for w in ("phone number", "e-mail", "wrong experience")):
-                    print(f"hold (contacts or wrong experience in letter): {clean(v['title'])} ({v['id']})")
-                    continue
-                result = respond(page, v)
-                src = "own letter" if v["letter"] else "hh letter"
-                print(f"{result} [{src}]: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
-                if result == "already":
-                    store.set_status(conn, v["id"], "skipped")
-                elif result == "manual":
-                    store.set_status(conn, v["id"], "manual")
-                    manual_streak += 1
-                    if manual_streak >= MAX_MANUAL:
-                        raise RuntimeError(f"{MAX_MANUAL} vacancies in a row need manual response; "
-                                           "run check-selectors")
-                else:
-                    store.set_status(conn, v["id"], "sent")
-                    if result == "sent-no-letter":
+    limit = getattr(args, "limit", 0) or 0
+    target = limit or max(0, min(len(queue), DAILY_LIMIT - store.count_today(conn, "sent")))
+    report(pid=os.getpid(), state="running", target=target, sent=0, no_letter=0, manual=0,
+           skipped=0, errors=0, current="", started=time.time(), finished=None)
+    manual_streak = err_streak = 0
+    state = "done"
+    try:
+        with sync_playwright() as p:
+            ctx = open_context(p)
+            try:
+                page = first_page(ctx)
+                for v in queue:
+                    if CANCEL:
+                        state = "cancelled"
+                        break
+                    if RUN["sent"] + RUN["no_letter"] >= target:
+                        break
+                    if store.count_today(conn, "sent") >= DAILY_LIMIT:
+                        print(f"Daily limit {DAILY_LIMIT} reached.")
+                        break
+                    # No manual review by decision of the user; only contact leaks are held back.
+                    if any(w in v["warnings"] for w in ("phone number", "e-mail", "wrong experience")):
+                        print(f"hold (contacts or wrong experience in letter): {clean(v['title'])} ({v['id']})")
+                        continue
+                    report(current=f"{clean(v['title'])} | {clean(v['company'])}")
+                    try:
+                        result = respond(page, v)
+                    except CaptchaBlocked as e:
+                        print(e)
+                        state = "captcha"
+                        break
+                    except Exception as e:  # a page/network error must not kill the whole run
+                        err_streak += 1
+                        report(errors=RUN["errors"] + 1)
+                        print(f"error on {v['url']}: {str(e)[:160]}")
+                        if err_streak >= MAX_ERRORS:
+                            state = "error"
+                            break
+                        pause()
+                        continue
+                    err_streak = 0
+                    src = "own letter" if v["letter"] else "hh letter"
+                    print(f"{result} [{src}]: {clean(v['title'])} | {clean(v['company'])} {v['url']}")
+                    if result == "already":
+                        store.set_status(conn, v["id"], "skipped")
+                        report(skipped=RUN["skipped"] + 1)
+                    elif result == "manual":
+                        store.set_status(conn, v["id"], "manual")
+                        report(manual=RUN["manual"] + 1)
+                        manual_streak += 1
+                        if manual_streak >= MAX_MANUAL:
+                            print(f"{MAX_MANUAL} vacancies in a row need manual response; "
+                                  "stopping (layout change?)")
+                            state = "error"
+                            break
+                    elif result == "sent":
+                        store.set_sent(conn, v["id"], "own" if v["letter"] else "hh")
+                        report(sent=RUN["sent"] + 1)
+                    else:
+                        store.set_sent(conn, v["id"], "none")
+                        report(no_letter=RUN["no_letter"] + 1)
                         print("  !! response sent WITHOUT the letter; attach it by hand")
-                if result != "manual":
-                    manual_streak = 0
-                pause()
+                    if result != "manual":
+                        manual_streak = 0
+                    pause()
+            finally:
+                close_ctx(ctx)
+    except BaseException:
+        state = "error"
+        raise
+    finally:
+        report(state=state, current="", finished=time.time())
+
+
+def cmd_export_session(args):
+    """Save the logged-in host browser session for the Docker container."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(PROFILE, headless=False, locale="ru-RU")
+        try:
+            ctx.storage_state(path=str(SESSION_FILE))
+            print(f"session saved to {SESSION_FILE}")
         finally:
             ctx.close()
 
@@ -414,7 +528,10 @@ def main():
     c.add_argument("--limit", type=int, default=DAILY_LIMIT)
     c.set_defaults(fn=cmd_draft)
     sub.add_parser("review").set_defaults(fn=cmd_review)
-    sub.add_parser("send").set_defaults(fn=cmd_send)
+    c = sub.add_parser("send")
+    c.add_argument("--limit", type=int, default=0, help="stop after N responses (0 = whole queue)")
+    c.set_defaults(fn=cmd_send)
+    sub.add_parser("export-session").set_defaults(fn=cmd_export_session)
     c = sub.add_parser("auto")
     c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
     c.add_argument("--pages", type=int, default=1)
@@ -422,6 +539,9 @@ def main():
     c.set_defaults(fn=cmd_auto)
     args = ap.parse_args()
     load_env()
+    if args.cmd in ("send", "auto"):
+        signal.signal(signal.SIGINT, on_signal)
+        signal.signal(signal.SIGTERM, on_signal)
     args.fn(args)
 
 

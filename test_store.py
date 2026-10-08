@@ -47,3 +47,11 @@ def test_skip_excluded_marks_queue():
     assert store.skip_excluded(conn) == 1
     assert [r["id"] for r in store.by_status(conn, "skipped")] == ["1"]
     assert [r["id"] for r in store.by_status(conn, "new")] == ["2"]
+
+
+def test_set_sent_records_note():
+    conn = store.connect(":memory:")
+    store.add(conn, vac("7"))
+    store.set_sent(conn, "7", "hh")
+    row = store.by_status(conn, "sent")[0]
+    assert row["note"] == "hh"
