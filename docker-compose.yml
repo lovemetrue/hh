@@ -8,5 +8,6 @@ services:
     env_file: .env                   # REQUESTY_API_KEY, HH_SEARCH_URL (never baked into the image)
     ports:
       - "127.0.0.1:8765:8765"        # local only
+      - "127.0.0.1:6080:6080"        # noVNC: the bot's browser window (to solve a captcha)
     volumes:
       - ./data:/data                 # database, hh session, run state and log

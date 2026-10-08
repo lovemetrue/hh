@@ -93,9 +93,17 @@
       <h1>hh<span>·</span>bot — панель откликов</h1>
       <div class="sub">Статистика только по откликам, отправленным этой программой</div>
     </div>
-    <div class="pill" id="pill"><span class="dot"></span><span id="pillText">…</span></div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <a class="pill" href="http://localhost:6080/vnc.html?autoconnect=1&resize=scale" target="_blank" rel="noopener"
+         style="color:inherit;text-decoration:none">🖥 Окно браузера</a>
+      <div class="pill" id="pill"><span class="dot"></span><span id="pillText">…</span></div>
+    </div>
   </header>
 
+  <div class="banner" id="captchaBanner" style="background:rgba(251,191,36,.16)">
+    ⚠ hh показал капчу. Откройте <a href="http://localhost:6080/vnc.html?autoconnect=1&resize=scale" target="_blank" rel="noopener"
+    style="color:inherit;font-weight:700">окно браузера</a>, пройдите проверку, и запуск продолжится сам (ждёт до 10 минут).
+  </div>
   <div class="banner" id="banner">Нет сессии hh: на компьютере выполните <b>python3 bot.py export-session</b>, затем перезапустите запуск.</div>
 
   <div class="grid kpis" id="kpis"></div>
@@ -147,7 +155,7 @@
 const $ = id => document.getElementById(id);
 const STATES = {
   running: ["Отправка", "run"], collecting: ["Сбор вакансий", "run"], drafting: ["Генерация писем", "run"],
-  cancelled: ["Остановлено", "warn"], done: ["Готово", ""], captcha: ["Капча: нужна сессия", "bad"],
+  captcha_wait: ["Нужна капча: решите в браузере", "warn"], cancelled: ["Остановлено", "warn"], done: ["Готово", ""], captcha: ["Капча: нужна сессия", "bad"],
   error: ["Ошибка", "bad"], crashed: ["Процесс прервался", "bad"], idle: ["Ожидание", ""]
 };
 let cancelAt = 0;
@@ -207,6 +215,7 @@ function renderRun(r) {
   const [label, cls] = STATES[st] || [st, ""];
   $("pill").className = "pill " + cls; $("pillText").textContent = label;
   $("banner").style.display = r.session === false ? "block" : "none";
+  $("captchaBanner").style.display = st === "captcha_wait" ? "block" : "none";
 
   const target = r.target || 0, done = (r.sent || 0) + (r.no_letter || 0);
   const busy = st === "collecting" || st === "drafting";

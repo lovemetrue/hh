@@ -136,11 +136,24 @@ def pause(lo=None, hi=None):
 
 
 def guard(page):
-    # Hand control to the human on captcha; never try to solve it.
-    if page.query_selector(SEL["captcha"]):
-        if not sys.stdin.isatty():
-            raise CaptchaBlocked("captcha shown: solve it on the host, then re-run export-session")
+    """On a captcha, hand control to the human; never try to solve it."""
+    if not page.query_selector(SEL["captcha"]):
+        return
+    if sys.stdin.isatty():
         input("Captcha or anti-bot check shown. Solve it in the browser, then press Enter... ")
+        return
+    # Container: the browser lives on a virtual display; the user solves the captcha through noVNC.
+    prev = RUN.get("state", "running")
+    report(state="captcha_wait", current="капча: решите её в окне браузера (localhost:6080)")
+    print("captcha shown: waiting up to 10 min for you to solve it in the browser window")
+    deadline = time.time() + 600
+    while time.time() < deadline and not CANCEL:
+        time.sleep(2)
+        if not page.query_selector(SEL["captcha"]):
+            page.wait_for_load_state("domcontentloaded")
+            report(state=prev, current="")
+            return
+    raise CaptchaBlocked("captcha was not solved in time")
 
 
 def cmd_login(args):
