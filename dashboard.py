@@ -92,8 +92,7 @@ def start_run(count, collect):
         if proc is not None and proc.poll() is None:
             return False, "Запуск уже идёт"
         if collect:
-            cmd = [sys.executable, "bot.py", "auto", "--max", str(count),
-                   "--pages", str(max(1, min(6, count // 30 + 1)))]
+            cmd = [sys.executable, "bot.py", "auto", "--max", str(count), "--pages", "20"]
         else:
             cmd = [sys.executable, "bot.py", "send", "--limit", str(count)]
         DATA.mkdir(parents=True, exist_ok=True)

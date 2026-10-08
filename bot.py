@@ -215,52 +215,57 @@ def cmd_collect(args):
     base_url = search_url(args)
     conn = store.connect()
     added = skipped = failed = streak = 0
+    done = lambda: CANCEL or (args.max and added >= args.max)
     with sync_playwright() as p:
         ctx = open_context(p)
         try:
             page = first_page(ctx)
-            links = []
+            # Walk the result pages until enough NEW vacancies are found: the first pages fill up with
+            # vacancies seen before, the new ones sit deeper in the list.
             for n in range(args.pages):
+                if done():
+                    break
                 sep = "&" if "?" in base_url else "?"
                 go(page, f"{base_url}{sep}page={n}")
                 guard(page)
                 hrefs = [a.get_attribute("href") for a in page.query_selector_all(SEL["serp_link"])]
-                found = [h.split("?")[0] for h in hrefs if h and "/vacancy/" in h]
+                found = list(dict.fromkeys(h.split("?")[0] for h in hrefs if h and "/vacancy/" in h))
                 if not found:
                     if n == 0:
                         raise RuntimeError("selector 'serp_link' matched nothing; run check-selectors")
                     break
-                links += found
-                if n < args.pages - 1:
-                    pause()
-            urls = list(dict.fromkeys(links))
-            for i, url in enumerate(urls):
-                if CANCEL or (args.max and added >= args.max):
-                    break
-                exists = conn.execute("SELECT 1 FROM vacancies WHERE id=?",
-                                      (store.vid_from_url(url),)).fetchone()
-                if exists:
-                    skipped += 1
+                fresh = [u for u in found if not conn.execute(
+                    "SELECT 1 FROM vacancies WHERE id=?", (store.vid_from_url(u),)).fetchone()]
+                skipped += len(found) - len(fresh)
+                print(f"page {n}: {len(found)} found, {len(fresh)} new")
+                if not fresh:
+                    pause(2, 5)  # nothing to read here: move on quickly
                     continue
-                try:
-                    store.add(conn, read_vacancy(page, url))
-                except Exception as e:
-                    failed += 1
-                    print(f"skip {url}: {e}")
-                    # Layout-change failures stop the run; "already applied" is normal.
-                    if not isinstance(e, AlreadyApplied):
-                        streak += 1
+                for url in fresh:
+                    if done():
+                        break
+                    try:
+                        store.add(conn, read_vacancy(page, url))
+                    except AlreadyApplied:
+                        # remember it, otherwise every collect would open this page again
+                        store.add(conn, {"id": store.vid_from_url(url), "url": url, "title": "(already applied)",
+                                         "company": "", "description": ""})
+                        store.set_status(conn, store.vid_from_url(url), "skipped")
+                        skipped += 1
+                        print(f"= already applied: {url}")
+                    except Exception as e:
+                        failed += 1
+                        print(f"skip {url}: {e}")
+                        streak += 1  # a layout change shows up as several failures in a row
                         if streak >= MAX_FAILURES:
                             raise RuntimeError(
                                 f"{MAX_FAILURES} consecutive failures; run check-selectors") from e
-                    if i < len(urls) - 1:
+                    else:
+                        streak = 0
+                        added += 1
+                        print(f"+ {url}")
+                    if not done():
                         pause()
-                    continue
-                streak = 0
-                added += 1
-                print(f"+ {url}")
-                if i < len(urls) - 1:
-                    pause()
         finally:
             close_ctx(ctx)
     print(f"added {added} new, skipped {skipped} known, {failed} failed")
@@ -570,7 +575,7 @@ def main():
     c.set_defaults(fn=cmd_check_selectors)
     c = sub.add_parser("collect")
     c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
-    c.add_argument("--pages", type=int, default=2)
+    c.add_argument("--pages", type=int, default=20, help="deepest result page to look at")
     c.add_argument("--max", type=int, default=0, help="stop after N new vacancies (0 = no cap)")
     c.set_defaults(fn=cmd_collect)
     c = sub.add_parser("draft")
@@ -588,7 +593,7 @@ def main():
     c.set_defaults(fn=cmd_clean)
     c = sub.add_parser("auto")
     c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
-    c.add_argument("--pages", type=int, default=1)
+    c.add_argument("--pages", type=int, default=20, help="deepest result page to look at")
     c.add_argument("--max", type=int, default=DAILY_LIMIT, help="new vacancies to collect and draft")
     c.set_defaults(fn=cmd_auto)
     args = ap.parse_args()
