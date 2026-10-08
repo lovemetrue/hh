@@ -383,17 +383,18 @@ def attach_letter(page, text):
     except PWTimeout:
         if page.is_visible(SEL["letter"]):  # form still open: the letter was not delivered
             raise
+    return text
 
 
 def respond(page, v):
-    """Apply and attach the letter. Returns sent | sent-no-letter | already | manual."""
+    """Apply and attach the letter. Returns (sent | sent-no-letter | already | manual, letter text)."""
     go(page, v["url"])
     guard(page)
     if page.query_selector(SEL["applied"]):
-        return "already"
+        return "already", ""
     buttons = [b for b in page.query_selector_all(SEL["apply"]) if b.is_visible()]
     if not buttons:
-        return "manual"
+        return "manual", ""
     buttons[0].click()
     try:
         # hh sends the response at once; any of these shows it went through (or asks for the letter).
@@ -403,13 +404,13 @@ def respond(page, v):
         # the toast can lag: re-open the vacancy and look for the response marker
         go(page, v["url"])
         if not page.query_selector(SEL["applied"]):
-            return "manual"
+            return "manual", ""
     try:
-        attach_letter(page, v["letter"])
+        text = attach_letter(page, v["letter"])
     except Exception as e:
         print(f"  letter not attached: {str(e)[:160]}")
-        return "sent-no-letter"
-    return "sent"
+        return "sent-no-letter", ""
+    return "sent", text
 
 
 def cmd_send(args):
@@ -445,7 +446,7 @@ def cmd_send(args):
                         continue
                     report(current=f"{clean(v['title'])} | {clean(v['company'])}")
                     try:
-                        result = respond(page, v)
+                        result, text = respond(page, v)
                     except CaptchaBlocked as e:
                         print(e)
                         state = "captcha"
@@ -476,6 +477,8 @@ def cmd_send(args):
                             break
                     elif result == "sent":
                         store.set_sent(conn, v["id"], "own" if v["letter"] else "hh")
+                        if not v["letter"]:
+                            store.set_letter(conn, v["id"], text)  # keep what hh generated, for audit
                         report(sent=RUN["sent"] + 1)
                     else:
                         store.set_sent(conn, v["id"], "none")
