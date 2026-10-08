@@ -96,6 +96,7 @@
     <div style="display:flex;gap:10px;align-items:center">
       <a class="pill" href="http://localhost:6080/vnc.html?autoconnect=1&resize=scale" target="_blank" rel="noopener"
          style="color:inherit;text-decoration:none">🖥 Окно браузера</a>
+      <button class="pill" id="notifBtn" style="cursor:pointer;color:inherit"></button>
       <div class="pill" id="pill"><span class="dot"></span><span id="pillText">…</span></div>
     </div>
   </header>
@@ -165,6 +166,37 @@ const STATES = {
   error: ["Ошибка", "bad"], crashed: ["Процесс прервался", "bad"], idle: ["Ожидание", ""]
 };
 let cancelAt = 0;
+const VNC_URL = "http://localhost:6080/vnc.html?autoconnect=1&resize=scale";
+let lastCaptchaNotify = 0, audioCtx = null;
+
+// --- captcha alert: browser pop-up (needs the dashboard tab to stay open), sound and title mark
+function notifState() {
+  const b = $("notifBtn");
+  if (!("Notification" in window)) { b.textContent = "🔕 Уведомления не поддерживаются"; b.disabled = true; return; }
+  const p = Notification.permission;
+  b.textContent = p === "granted" ? "🔔 Уведомления включены" : p === "denied" ? "🔕 Заблокированы в браузере" : "🔔 Включить уведомления";
+  b.disabled = p !== "default";
+}
+function beep() {
+  try {
+    if (!audioCtx) return;
+    for (let i = 0; i < 3; i++) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(audioCtx.destination);
+      o.start(audioCtx.currentTime + i * 0.35); o.stop(audioCtx.currentTime + i * 0.35 + 0.2);
+    }
+  } catch (e) {}
+}
+function alertCaptcha() {
+  document.title = "⚠ Нужна капча · hh-bot";
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (Date.now() - lastCaptchaNotify < 120000) return;  // remind every 2 minutes while it waits
+  lastCaptchaNotify = Date.now();
+  const n = new Notification("hh-bot: нужна капча", {
+    body: "hh просит проверку. Нажмите, чтобы открыть окно браузера бота.", tag: "hh-captcha", requireInteraction: true });
+  n.onclick = () => { window.open(VNC_URL, "_blank"); n.close(); };
+  beep();
+}
 
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
 
@@ -250,6 +282,7 @@ function renderRun(r) {
   $("pill").className = "pill " + cls; $("pillText").textContent = label;
   $("banner").style.display = r.session === false ? "block" : "none";
   $("captchaBanner").style.display = st === "captcha_wait" ? "block" : "none";
+  if (st === "captcha_wait") alertCaptcha(); else { document.title = "hh-bot · панель"; lastCaptchaNotify = 0; }
 
   const target = r.target || 0, done = (r.sent || 0) + (r.no_letter || 0);
   const busy = st === "collecting" || st === "drafting";
@@ -275,6 +308,16 @@ async function tick() {
 }
 async function tickStats() {
   try { renderStats(await api("/api/stats")); } catch (e) {}
+}
+
+$("notifBtn").onclick = async () => {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();  // created on a user click
+  await Notification.requestPermission(); notifState(); beep();
+};
+notifState();
+if ("Notification" in window && Notification.permission === "granted") {
+  // a page reload loses the audio context: the first click anywhere restores it
+  document.addEventListener("click", () => { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); }, { once: true });
 }
 
 document.querySelectorAll(".chip").forEach(b => b.onclick = () => { $("count").value = b.dataset.n; });
