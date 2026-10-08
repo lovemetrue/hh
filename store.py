@@ -119,3 +119,19 @@ def clean(conn, statuses=CLEANABLE):
     n = conn.execute(f"DELETE FROM vacancies WHERE status IN ({marks})", tuple(statuses)).rowcount
     conn.commit()
     return n
+
+
+def mark(conn, vid, action):
+    """Resolve an item of the dashboard's manual lists; False if the row is not in the expected state."""
+    row = conn.execute("SELECT status, note FROM vacancies WHERE id=?", (vid,)).fetchone()
+    if not row:
+        return False
+    if action == "done" and row["status"] == "manual":  # applied by hand
+        set_sent(conn, vid, "manual")
+    elif action == "dismiss" and row["status"] == "manual":  # not interested
+        set_status(conn, vid, "skipped")
+    elif action == "letter_done" and row["status"] == "sent" and row["note"] == "none":
+        _update(conn, vid, note="manual-letter")  # letter attached by hand
+    else:
+        return False
+    return True

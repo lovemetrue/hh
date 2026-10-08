@@ -65,7 +65,15 @@ def stats():
     recent = [dict(r) for r in c.execute(
         "select updated, company, title, url, note from vacancies where status='sent' "
         "order by updated desc limit 20")]
+    manual = [dict(r) for r in c.execute(
+        "select id, title, company, url, updated from vacancies where status='manual' "
+        "order by updated desc limit 300")]
+    noletter = [dict(r) for r in c.execute(
+        "select id, title, company, url, letter, updated from vacancies where status='sent' and note='none' "
+        "order by updated desc limit 100")]
     return {
+        "manual_list": manual,
+        "noletter_list": noletter,
         "counts": counts,
         "today": one("select count(*) from vacancies where status='sent' and date(updated)=date('now','localtime')"),
         "week": one("select count(*) from vacancies where status='sent' and updated >= datetime('now','-7 days','localtime')"),
@@ -166,6 +174,9 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.send_json({"ok": False, "message": str(e)}, 400)
             return self.send_json({"ok": True, "message": f"Удалено вакансий: {n} (копия базы: state.sqlite.bak)"})
+        if self.path == "/api/mark":
+            ok = store.mark(store.connect(), str(data.get("id") or ""), str(data.get("action") or ""))
+            return self.send_json({"ok": ok}, 200 if ok else 409)
         if self.path == "/api/cancel":
             ok, msg = cancel_run(bool(data.get("force")))
             return self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)

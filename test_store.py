@@ -76,3 +76,21 @@ def test_clean_refuses_sent_and_unknown():
         except ValueError:
             continue
         raise AssertionError(f"clean accepted {bad}")
+
+
+def test_mark_resolves_manual_lists():
+    conn = store.connect(":memory:")
+    for i in "123":
+        store.add(conn, vac(i))
+    store.set_status(conn, "1", "manual")
+    store.set_status(conn, "2", "manual")
+    store.set_sent(conn, "3", "none")
+    assert store.mark(conn, "1", "done") and store.by_status(conn, "sent")[0]["id"] in ("1", "3")
+    assert conn.execute("select note from vacancies where id='1'").fetchone()["note"] == "manual"
+    assert store.mark(conn, "2", "dismiss")
+    assert store.by_status(conn, "skipped")[0]["id"] == "2"
+    assert store.mark(conn, "3", "letter_done")
+    assert conn.execute("select note from vacancies where id='3'").fetchone()["note"] == "manual-letter"
+    # wrong state or unknown id is refused
+    assert not store.mark(conn, "1", "done") and not store.mark(conn, "9", "done")
+    assert not store.mark(conn, "3", "letter_done")

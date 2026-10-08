@@ -148,6 +148,12 @@
     <table><thead><tr><th>Время</th><th>Компания</th><th>Вакансия</th><th>Письмо</th></tr></thead><tbody id="recent"></tbody></table>
   </div>
 
+  <div class="card" style="margin-bottom:14px">
+    <h2>Откликнуться вручную <span class="tag" id="manualCount" style="margin-left:6px"></span></h2>
+    <div class="sub" style="margin-bottom:8px">Вакансии, где hh просит анкету или тест, и отклики, у которых не приложилось письмо.</div>
+    <table><tbody id="manualList"></tbody></table>
+  </div>
+
   <div class="card"><details><summary>Журнал последнего запуска</summary><pre id="log">—</pre></details></div>
 </div>
 
@@ -189,7 +195,8 @@ function renderStats(s) {
   }
 
   const names = { own: ["Своё письмо (нейронка)", "#7c8cff"], hh: ["Письмо hh «Сгенерировать»", "#6ee7c8"],
-                  none: ["Без письма", "#fbbf24"], "n/a": ["Старые отклики (н/д)", "#4b5570"] };
+                  none: ["Без письма", "#fbbf24"], manual: ["Вручную", "#f472b6"],
+                  "manual-letter": ["Письмо приложено вручную", "#a78bfa"], "n/a": ["Старые отклики (н/д)", "#4b5570"] };
   const total = Object.values(s.sources).reduce((a, b) => a + b, 0) || 1;
   const st = $("stack"), lg = $("legend"); st.textContent = ""; lg.textContent = "";
   for (const [key, n] of Object.entries(s.sources)) {
@@ -200,6 +207,7 @@ function renderStats(s) {
   }
   if (!Object.keys(s.sources).length) lg.textContent = "Пока нет откликов";
 
+  renderManual(s);
   const tb = $("recent"); tb.textContent = "";
   for (const r of s.recent) {
     const tr = el("tr"), a = el("a", r.title); a.href = r.url; a.target = "_blank"; a.rel = "noopener";
@@ -208,6 +216,32 @@ function renderStats(s) {
     const tg = el("td"); tg.append(el("span", tag[0], "tag " + tag[1]));
     tr.append(el("td", r.updated.slice(5, 16)), el("td", r.company), td, tg); tb.append(tr);
   }
+}
+
+function renderManual(s) {
+  const tb = $("manualList"); tb.textContent = "";
+  const total = s.manual_list.length + s.noletter_list.length;
+  $("manualCount").textContent = total;
+  const rowFor = (v, kind) => {
+    const tr = el("tr"), a = el("a", v.title); a.href = v.url; a.target = "_blank"; a.rel = "noopener";
+    const t1 = el("td"); t1.append(a); t1.append(el("div", v.company, "sub"));
+    const t2 = el("td", kind === "manual" ? "нужен ручной отклик" : "отправлено без письма", "sub");
+    const t3 = el("td"); t3.style.textAlign = "right"; t3.style.whiteSpace = "nowrap";
+    const btn = (label, fn) => { const b = el("button", label, "chip"); b.style.marginLeft = "6px"; b.onclick = fn; return b; };
+    const mark = async action => { await api("/api/mark", { id: v.id, action }); tickStats(); };
+    if (kind === "manual") {
+      t3.append(btn("Откликнулся", () => mark("done")), btn("Не интересно", () => mark("dismiss")));
+    } else {
+      if (v.letter) t3.append(btn("Копировать письмо", async e => {
+        await navigator.clipboard.writeText(v.letter); e.target.textContent = "Скопировано";
+      }));
+      t3.append(btn("Письмо приложено", () => mark("letter_done")));
+    }
+    tr.append(t1, t2, t3); return tr;
+  };
+  for (const v of s.manual_list) tb.append(rowFor(v, "manual"));
+  for (const v of s.noletter_list) tb.append(rowFor(v, "noletter"));
+  if (!total) { const tr = el("tr"), td = el("td", "Пусто: всё отправлено автоматически"); td.className = "sub"; tr.append(td); tb.append(tr); }
 }
 
 function renderRun(r) {
