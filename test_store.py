@@ -94,3 +94,10 @@ def test_mark_resolves_manual_lists():
     # wrong state or unknown id is refused
     assert not store.mark(conn, "1", "done") and not store.mark(conn, "9", "done")
     assert not store.mark(conn, "3", "letter_done")
+
+
+def test_company_filter_excludes_sber_family():
+    for company in ("Сбер. IT", "SberTech", "Сбер. Кибербезопасность", "СберКорус", "SberCIB", "Сбербанк"):
+        assert store.title_excluded("DevOps-инженер", company), company
+    for company in ("Яндекс", "Альфа-Банк", "Tinkoff", ""):
+        assert not store.title_excluded("DevOps-инженер", company), company

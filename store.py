@@ -82,8 +82,12 @@ EXCLUDE_UNLESS_DEVOPS = re.compile(r"администратор|sysadmin|сис�
 KEEP = re.compile(r"devops|девопс|sre", re.I)
 
 
-def title_excluded(title):
-    return bool(EXCLUDE_ALWAYS.search(title)) or (
+# Employers the bot never applies to (user decision): Sber and all its subsidiaries.
+EXCLUDE_COMPANY = re.compile(r"сбер|sber", re.I)
+
+
+def title_excluded(title, company=""):
+    return bool(EXCLUDE_COMPANY.search(company or "")) or bool(EXCLUDE_ALWAYS.search(title)) or (
         bool(EXCLUDE_UNLESS_DEVOPS.search(title)) and not KEEP.search(title))
 
 
@@ -92,7 +96,7 @@ def skip_excluded(conn):
     n = 0
     for status in ("new", "drafted"):
         for r in by_status(conn, status):
-            if title_excluded(r["title"]):
+            if title_excluded(r["title"], r["company"]):
                 set_status(conn, r["id"], "skipped")
                 n += 1
     return n
