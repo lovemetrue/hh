@@ -496,6 +496,14 @@ def cmd_send(args):
         report(state=state, current="", finished=time.time())
 
 
+def cmd_clean(args):
+    """Delete found-but-not-sent vacancies (sent history stays). A backup is written first."""
+    conn = store.connect()
+    statuses = tuple(args.status) or store.CLEANABLE
+    store.backup(conn)
+    print(f"removed {store.clean(conn, statuses)} vacancies ({', '.join(statuses)}); backup: {store.DB_PATH}.bak")
+
+
 def cmd_export_session(args):
     """Save the logged-in host browser session for the Docker container."""
     DATA.mkdir(parents=True, exist_ok=True)
@@ -538,6 +546,10 @@ def main():
     c.add_argument("--limit", type=int, default=0, help="stop after N responses (0 = whole queue)")
     c.set_defaults(fn=cmd_send)
     sub.add_parser("export-session").set_defaults(fn=cmd_export_session)
+    c = sub.add_parser("clean")
+    c.add_argument("--status", action="append", default=[], choices=store.CLEANABLE,
+                   help="repeatable; default: new, drafted, manual, skipped")
+    c.set_defaults(fn=cmd_clean)
     c = sub.add_parser("auto")
     c.add_argument("url", nargs="?", help="search URL; default: HH_SEARCH_URL from .env")
     c.add_argument("--pages", type=int, default=1)

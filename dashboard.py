@@ -154,6 +154,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": False, "message": f"Количество от 1 до {DAILY_LIMIT}"}, 400)
             ok, msg = start_run(count, bool(data.get("collect")))
             return self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)
+        if self.path == "/api/clean":
+            with lock:
+                if proc is not None and proc.poll() is None:
+                    return self.send_json({"ok": False, "message": "Сначала остановите запуск"}, 409)
+                statuses = tuple(data.get("statuses") or ())
+                try:
+                    conn = store.connect()
+                    store.backup(conn)
+                    n = store.clean(conn, statuses)
+                except ValueError as e:
+                    return self.send_json({"ok": False, "message": str(e)}, 400)
+            return self.send_json({"ok": True, "message": f"Удалено вакансий: {n} (копия базы: state.sqlite.bak)"})
         if self.path == "/api/cancel":
             ok, msg = cancel_run(bool(data.get("force")))
             return self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)

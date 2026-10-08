@@ -55,3 +55,24 @@ def test_set_sent_records_note():
     store.set_sent(conn, "7", "hh")
     row = store.by_status(conn, "sent")[0]
     assert row["note"] == "hh"
+
+
+def test_clean_removes_unsent_and_keeps_sent():
+    conn = store.connect(":memory:")
+    for i, st in enumerate(("new", "drafted", "manual", "skipped", "sent"), 1):
+        store.add(conn, vac(str(i)))
+        store.set_status(conn, str(i), st)
+    assert store.clean(conn, ("new", "drafted")) == 2
+    assert sorted(r["status"] for r in conn.execute("select status from vacancies")) == ["manual", "sent", "skipped"]
+    assert store.clean(conn) == 2
+    assert [r["status"] for r in conn.execute("select status from vacancies")] == ["sent"]
+
+
+def test_clean_refuses_sent_and_unknown():
+    conn = store.connect(":memory:")
+    for bad in (("sent",), ("new", "sent"), ("bogus",), ()):
+        try:
+            store.clean(conn, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"clean accepted {bad}")

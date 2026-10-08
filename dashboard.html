@@ -119,6 +119,17 @@
     <div class="msg" id="msg"></div>
   </div>
 
+  <div class="card" style="margin-bottom:14px">
+    <h2>База найденных вакансий</h2>
+    <div class="meta" id="dbmeta" style="margin:0 0 12px"></div>
+    <div class="controls" style="margin:0">
+      <button class="chip" id="cleanQueue">Очистить очередь (новые и с письмами)</button>
+      <button class="chip" id="cleanAll">Очистить всё неотправленное</button>
+      <span class="sub">Отправленные отклики и статистика не удаляются; перед очисткой делается копия базы.</span>
+    </div>
+    <div class="msg" id="cleanMsg"></div>
+  </div>
+
   <div class="grid two">
     <div class="card"><h2>Отклики за 14 дней</h2><div class="chart" id="chart"></div></div>
     <div class="card"><h2>Какое письмо ушло</h2><div class="stack" id="stack"></div><div class="legend" id="legend"></div></div>
@@ -155,6 +166,12 @@ function renderStats(s) {
     [s.queue, "в очереди"], [s.counts.manual || 0, "нужен ручной отклик"], [s.counts.skipped || 0, "пропущено"]
   ];
   for (const [v, l, hi] of items) { const d = el("div", null, "card kpi" + (hi ? " hi" : "")); d.append(el("div", v, "v"), el("div", l, "l")); k.append(d); }
+
+  window.lastCounts = s.counts;
+  const dm = $("dbmeta"); dm.textContent = "";
+  for (const [l, key] of [["новые", "new"], ["с письмом", "drafted"], ["ручные", "manual"], ["пропущенные", "skipped"], ["отправлено", "sent"]]) {
+    const sp = el("span", l + ": "); sp.append(el("b", s.counts[key] || 0)); dm.append(sp);
+  }
 
   const max = Math.max(1, ...s.daily.map(d => d.n)), ch = $("chart"); ch.textContent = "";
   for (const d of s.daily) {
@@ -230,6 +247,17 @@ $("force").onclick = async () => {
     const res = await api("/api/cancel", { force: true }); $("msg").textContent = res.message || "";
   }
 };
+
+async function clean(statuses, label) {
+  const c = window.lastCounts || {};
+  const n = statuses.reduce((a, s) => a + (c[s] || 0), 0);
+  if (!n) { $("cleanMsg").textContent = "Нечего очищать"; return; }
+  if (!confirm("Удалить из базы " + n + " вакансий (" + label + ")?\nОтправленные отклики останутся.")) return;
+  const res = await api("/api/clean", { statuses });
+  $("cleanMsg").textContent = res.message || ""; tickStats();
+}
+$("cleanQueue").onclick = () => clean(["new", "drafted"], "новые и с письмами");
+$("cleanAll").onclick = () => clean(["new", "drafted", "manual", "skipped"], "все неотправленные");
 
 tick(); tickStats();
 setInterval(tick, 2000); setInterval(tickStats, 6000);

@@ -96,3 +96,26 @@ def skip_excluded(conn):
                 set_status(conn, r["id"], "skipped")
                 n += 1
     return n
+
+
+# Sent rows are the history behind the dashboard statistics: they are never deleted.
+CLEANABLE = ("new", "drafted", "manual", "skipped")
+
+
+def backup(conn):
+    """Copy the database next to itself (state.sqlite.bak) before a destructive operation."""
+    dst = sqlite3.connect(DB_PATH + ".bak")
+    with dst:
+        conn.backup(dst)
+    dst.close()
+
+
+def clean(conn, statuses=CLEANABLE):
+    """Delete found-but-not-sent vacancies; returns the number of rows removed."""
+    bad = set(statuses) - set(CLEANABLE)
+    if bad or not statuses:
+        raise ValueError(f"cannot clean statuses: {sorted(bad) or 'none given'}")
+    marks = ",".join("?" * len(statuses))
+    n = conn.execute(f"DELETE FROM vacancies WHERE status IN ({marks})", tuple(statuses)).rowcount
+    conn.commit()
+    return n
