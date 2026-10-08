@@ -32,3 +32,18 @@ def test_sends_to_the_chat_and_hides_token_on_failure(monkeypatch, capsys):
     monkeypatch.setattr(notify.urllib.request, "build_opener", lambda *h: Boom())
     assert notify.send("hello") is False
     assert "SECRET" not in capsys.readouterr().out
+
+
+def test_accepts_telegram_token_alias(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_TOKEN", "9:ALIAS")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    seen = {}
+
+    class Opener:
+        def open(self, req, timeout):
+            seen["url"] = req.full_url
+            return io.BytesIO(b'{"ok": true}')
+
+    monkeypatch.setattr(notify.urllib.request, "build_opener", lambda *h: Opener())
+    assert notify.send("x") is True and "/bot9:ALIAS/" in seen["url"]

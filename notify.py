@@ -9,7 +9,7 @@ import letter  # reuses its certifi SSL context
 
 def send(text):
     """Send a message to the owner. Returns True on success; never raises (an alert must not stop a run)."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         return False
