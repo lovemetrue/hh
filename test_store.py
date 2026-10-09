@@ -116,3 +116,10 @@ def test_sber_filter_has_no_false_positives():
     assert not store.title_excluded("DevOps", "Яндекс", "накопим сбережения, сберечь время, Super Berry")
     assert not store.title_excluded("DevOps", "Альфа-Банк", "Kubernetes, GitLab CI")
     assert not store.title_excluded("DevOps", "Tinkoff", "Hyperberry, Passberry, ресурсы без сбоев")
+
+
+def test_requires_devops_duties():
+    assert store.title_excluded("Backend developer", "X", "Пишем сервисы на Go, SQL, REST API")
+    assert not store.title_excluded("Инженер", "X", "Настройка CI/CD, Docker, Kubernetes")
+    assert not store.title_excluded("DevOps-инженер", "X", "Любой текст")
+    assert not store.title_excluded("Инженер", "X", "")  # no description: keep

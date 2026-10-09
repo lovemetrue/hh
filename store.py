@@ -99,9 +99,24 @@ def is_sber(*texts):
     return False
 
 
+# A vacancy needs real DevOps duties: DevOps/SRE in the title, or >= 2 distinct DevOps markers in the description.
+DEVOPS_MARKERS = [re.compile(p, re.I) for p in (
+    r"devops|девопс|\bsre\b", r"ci\s*/\s*cd|\bci\b.{0,3}\bcd\b|gitlab[\s-]*ci|jenkins|github\s*actions|teamcity",
+    r"kubernetes|k8s|\bhelm\b|openshift|\bargo", r"docker|контейнер", r"terraform|ansible|\biac\b|infrastructure\s+as",
+    r"prometheus|grafana|мониторинг|monitoring|\belk\b|loki", r"пайплайн|pipeline|деплой|deploy|развертыван|развёртыван")]
+
+
+def has_devops_duties(title, description=""):
+    if KEEP.search(title or ""):
+        return True
+    if not (description or "").strip():
+        return True  # nothing to judge by: do not drop on a missing description
+    return sum(bool(m.search(description)) for m in DEVOPS_MARKERS) >= 2
+
+
 def title_excluded(title, company="", description=""):
     return is_sber(company, title, description) or bool(EXCLUDE_ALWAYS.search(title)) or (
-        bool(EXCLUDE_UNLESS_DEVOPS.search(title)) and not KEEP.search(title))
+        bool(EXCLUDE_UNLESS_DEVOPS.search(title)) and not KEEP.search(title)) or not has_devops_duties(title, description)
 
 
 def skip_excluded(conn):
