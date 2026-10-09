@@ -123,3 +123,8 @@ def test_requires_devops_duties():
     assert not store.title_excluded("Инженер", "X", "Настройка CI/CD, Docker, Kubernetes")
     assert not store.title_excluded("DevOps-инженер", "X", "Любой текст")
     assert not store.title_excluded("Инженер", "X", "")  # no description: keep
+
+
+def test_senior_excluded():
+    for t in ("Senior DevOps", "Сеньор DevOps-инженер", "DevOps Junior"):
+        assert store.title_excluded(t), t

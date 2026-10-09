@@ -76,7 +76,7 @@ def count_today(conn, status):
 # Titles the bot never applies to: wrong level, or not a DevOps role.
 EXCLUDE_ALWAYS = re.compile(
     r"стаж[её]р|intern\b|trainee|ученик|junior|джуниор|младш|тимлид|team\s*lead|tech\w*\s*lead|"
-    r"техническ\w+\s+лидер|руководител|head\s+of|начальник|\blead\b", re.I)
+    r"техническ\w+\s+лидер|руководител|head\s+of|начальник|\blead\b|senior|сеньор|синьор", re.I)
 # Sysadmin roles are fine when the title also says DevOps/SRE.
 EXCLUDE_UNLESS_DEVOPS = re.compile(r"администратор|sysadmin|системн\w+\s+инженер|техническ\w+\s+поддержк", re.I)
 KEEP = re.compile(r"devops|девопс|sre", re.I)
